@@ -21,6 +21,7 @@ dev = [
     "pytest>=7.0",
     "ruff>=0.4",
 ]
+torch = ["torch>=2.0"]
 
 [tool.setuptools.packages.find]
 include = ["src*", "visualization*"]
