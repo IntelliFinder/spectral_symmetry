@@ -1,0 +1,113 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{hyperref}
+
+\definecolor{uncanon}{RGB}{220,50,47}
+\definecolor{canon}{RGB}{38,139,210}
+
+\title{Spectral Symmetry Analysis:\\Detecting Uncanonicalizable Eigenvectors in Point Clouds}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Method}
+
+Given a point cloud $\mathcal{P} = \{p_i\}_{i=1}^N \subset \mathbb{R}^3$, we construct a $k$-nearest-neighbor graph ($k=12$), symmetrize the adjacency matrix $A \leftarrow \frac{1}{2}(A + A^\top)$, and form the combinatorial graph Laplacian $L = D - A$.
+We compute the $m$ smallest eigenpairs $(\lambda_i, v_i)$ via \texttt{scipy.sparse.linalg.eigsh}.
+
+For each eigenvector $v_i$, we compute the \emph{uncanonicalizability score}:
+\begin{equation}
+    s(v) = \frac{\|\operatorname{sort}(v) - \operatorname{sort}(-v)\|}{\|\operatorname{sort}(v)\|}
+\end{equation}
+A low score $s(v) \approx 0$ indicates that the sorted value distribution of $v$ is nearly identical to that of $-v$, making the sign of $v$ unresolvable---the eigenvector is \emph{uncanonicalizable}.
+
+\paragraph{Threshold.}
+We classify $v$ as uncanonicalizable if $s(v) < \tau$, where
+\begin{equation}
+    \tau = \frac{5}{\sqrt{N}}
+\end{equation}
+This accounts for discretization noise: a perfectly anti-symmetric eigenvector sampled at $N$ points yields $s(v) = O(1/\sqrt{N})$ due to finite sampling.
+
+\section{Results}
+
+\subsection{Per-Shape-Type Statistics}
+
+\begin{table}[h]
+\centering
+\caption{Spectral symmetry statistics across shape categories (Symmetria dataset, $N \approx 896$, $\tau = 0.1670$).}
+\label{tab:per_shape}
+\begin{tabular}{@{}llcccccc@{}}
+\toprule
+Shape & Symmetry & Shapes & \makecell{Fiedler\\Uncanon.} & \makecell{Avg Uncanon.\\Eigvecs (of 19)} & \makecell{Spectral\\Gap} & \makecell{Min\\Score} \\
+\midrule
+Vase & Rotational ($C_\infty$) & 30 & 100.0\% & 11.6 & 0.0882 & 0.0192 \\
+Human & Bilateral ($C_s$) & 30 & 16.7\% & 8.7 & 0.0694 & 0.0438 \\
+Table & Four-fold ($C_{4v}$) & 30 & 13.3\% & 7.1 & 0.0171 & 0.0387 \\
+Chair & Bilateral ($C_s$) & 30 & 6.7\% & 9.0 & 0.0494 & 0.0274 \\
+Airplane & Bilateral ($C_s$) & 30 & 3.3\% & 4.7 & 0.0512 & 0.0423 \\
+\midrule
+\textbf{All} & --- & 150 & 28.0\% & 8.2 & 0.0551 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Fiedler vector ($v_1$) uncanonicalizability score distribution.}
+\label{tab:fiedler}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Shape & Min & Median & Mean & Max & $< \tau$ \\
+\midrule
+Vase & 0.0242 & 0.0562 & 0.0621 & 0.1382 & 30/30 \\
+Human & 0.1011 & 0.2216 & 0.2199 & 0.3056 & 5/30 \\
+Table & 0.0720 & 0.5583 & 0.5525 & 0.9208 & 4/30 \\
+Chair & 0.0562 & 0.9753 & 0.8124 & 1.2071 & 2/30 \\
+Airplane & 0.1514 & 0.4803 & 0.4416 & 0.6960 & 1/30 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Eigenvector Distributions}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/eigenvector_histograms.pdf}
+\caption{Histograms of eigenvector values ({\color{canon}blue}: $\operatorname{sort}(v)$, {\color{uncanon}red}: $\operatorname{sort}(-v)$) for the first six eigenvectors across shape types. A checkmark ($\checkmark$) marks eigenvectors classified as uncanonicalizable ($s < \tau$). Overlapping distributions indicate sign ambiguity.}
+\label{fig:histograms}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/score_heatmap.pdf}
+\caption{Uncanonicalizability score heatmap across eigenvector indices. Green indicates high scores (canonicalizable), red indicates low scores (uncanonicalizable). The dashed line on the colorbar marks the threshold $\tau = 5/\sqrt{N}$.}
+\label{fig:heatmap}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/fiedler_coloring.pdf}
+\caption{Point clouds colored by Fiedler vector ($v_1$) value. Anti-symmetric coloring (equal red and blue mass) corresponds to low uncanonicalizability score. The vase, with continuous rotational symmetry, exhibits the strongest sign ambiguity.}
+\label{fig:fiedler}
+\end{figure}
+
+\section{Discussion}
+
+The results confirm that geometric symmetry directly manifests as spectral sign ambiguity:
+\begin{itemize}
+    \item \textbf{Vase} (continuous rotational symmetry): 100\% Fiedler uncanonizability and the highest average count of uncanonicalizable eigenvectors. Every azimuthal mode has an equivalent rotation, making sign assignment arbitrary.
+    \item \textbf{Human and table}: Moderate rates reflecting bilateral/four-fold discrete symmetry planes that create anti-symmetric Fiedler partitions.
+    \item \textbf{Airplane}: Lowest rate---the elongated fuselage breaks symmetry along the principal axis, allowing the Fiedler vector's sign to be resolved.
+\end{itemize}
+
+The threshold $\tau = 5/\sqrt{N}$ provides a principled cutoff: it is large enough to absorb finite-sampling noise ($O(1/\sqrt{N})$) but small enough to exclude eigenvectors with genuinely asymmetric distributions.
+
+\end{document}
