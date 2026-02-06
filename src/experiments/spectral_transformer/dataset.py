@@ -1,17 +1,17 @@
-"""Spectral ModelNet10 dataset: point clouds with Laplacian eigenvector features."""
+"""Spectral ModelNet dataset: point clouds with Laplacian eigenvector features."""
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from src.datasets.modelnet import ModelNet10Dataset
+from src.datasets.modelnet import ModelNet10Dataset, ModelNet40Dataset
 from src.preprocessing import center_and_normalize, random_subsample
 from src.spectral_core import build_graph_laplacian, compute_eigenpairs
 
 
-class SpectralModelNet10(Dataset):
-    """ModelNet10 shapes with pre-computed spectral positional encodings.
+class SpectralModelNet(Dataset):
+    """ModelNet shapes with pre-computed spectral positional encodings.
 
     Each item is a tuple ``(features, mask, label)`` where:
     - ``features`` is a ``(n_points, 3 + n_eigs)`` float tensor (xyz || eigvecs),
@@ -20,6 +20,25 @@ class SpectralModelNet10(Dataset):
     - ``label`` is an int class index.
 
     All spectral computation is done once at init and stored in memory.
+
+    Parameters
+    ----------
+    root_dir : str
+        Root data directory.
+    variant : int
+        10 or 40 (default 10).
+    split : str
+        'train' or 'test'.
+    n_points : int
+        Number of points per shape.
+    n_eigs : int
+        Number of eigenvectors to compute.
+    n_neighbors : int
+        k-NN neighbors for graph construction.
+    download : bool
+        If True, download the dataset if missing.
+    canonicalize : bool
+        If True, canonicalize eigenvector signs.
     """
 
     def __init__(
@@ -31,25 +50,37 @@ class SpectralModelNet10(Dataset):
         n_neighbors=12,
         download=False,
         canonicalize=False,
+        variant=10,
     ):
         super().__init__()
         self.n_points = n_points
         self.n_eigs = n_eigs
         self.n_neighbors = n_neighbors
         self.canonicalize = canonicalize
+        self.variant = variant
 
-        base_dataset = ModelNet10Dataset(
-            root_dir,
-            split=split,
-            max_points=n_points * 2,
-            download=download,
-        )
+        if variant == 10:
+            base_dataset = ModelNet10Dataset(
+                root_dir,
+                split=split,
+                max_points=n_points * 2,
+                download=download,
+            )
+        elif variant == 40:
+            base_dataset = ModelNet40Dataset(
+                root_dir,
+                split=split,
+                max_points=n_points * 2,
+                download=download,
+            )
+        else:
+            raise ValueError(f"variant must be 10 or 40, got {variant}")
 
         # Collect all class names first to build a sorted label mapping
         raw_items = []
         class_names = set()
         for name, points in base_dataset:
-            # name format: "modelnet10/{class_name}/{file}.off"
+            # name format: "modelnet{10,40}/{class_name}/{file}.off"
             parts = name.split("/")
             class_name = parts[1]
             class_names.add(class_name)
@@ -108,4 +139,54 @@ class SpectralModelNet10(Dataset):
             torch.from_numpy(features),
             torch.from_numpy(mask),
             label,
+        )
+
+
+class SpectralModelNet10(SpectralModelNet):
+    """Backward-compatible alias for SpectralModelNet with variant=10."""
+
+    def __init__(
+        self,
+        root_dir,
+        split="train",
+        n_points=512,
+        n_eigs=16,
+        n_neighbors=12,
+        download=False,
+        canonicalize=False,
+    ):
+        super().__init__(
+            root_dir,
+            split=split,
+            n_points=n_points,
+            n_eigs=n_eigs,
+            n_neighbors=n_neighbors,
+            download=download,
+            canonicalize=canonicalize,
+            variant=10,
+        )
+
+
+class SpectralModelNet40(SpectralModelNet):
+    """Backward-compatible alias for SpectralModelNet with variant=40."""
+
+    def __init__(
+        self,
+        root_dir,
+        split="train",
+        n_points=512,
+        n_eigs=16,
+        n_neighbors=12,
+        download=False,
+        canonicalize=False,
+    ):
+        super().__init__(
+            root_dir,
+            split=split,
+            n_points=n_points,
+            n_eigs=n_eigs,
+            n_neighbors=n_neighbors,
+            download=download,
+            canonicalize=canonicalize,
+            variant=40,
         )

@@ -14,23 +14,24 @@ import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 
-from src.experiments.spectral_transformer.dataset import SpectralModelNet10  # noqa: E402
+from src.experiments.spectral_transformer.dataset import SpectralModelNet  # noqa: E402
 from src.experiments.spectral_transformer.model import SpectralTransformerClassifier  # noqa: E402
 from src.experiments.spectral_transformer.train import evaluate, train_one_epoch  # noqa: E402
 
 # ── Hyperparameters ──────────────────────────────────────────────────────────
 DATA_DIR = "data"
+VARIANT = 40  # ModelNet variant (10 or 40)
 N_POINTS = 512
 N_EIGS = 16
 N_NEIGHBORS = 12
-EPOCHS = 50
-BATCH_SIZE = 32
+EPOCHS = 100
+BATCH_SIZE = 16
 LR = 1e-3
 WEIGHT_DECAY = 1e-4
-D_MODEL = 64
-NHEAD = 4
-NUM_LAYERS = 3
-DIM_FEEDFORWARD = 128
+D_MODEL = 128
+NHEAD = 8
+NUM_LAYERS = 6
+DIM_FEEDFORWARD = 512
 DROPOUT = 0.1
 SEED = 42
 SAVE_DIR = Path("results/classifier")
@@ -93,8 +94,8 @@ def main():
     print(f"Device: {device}\n")
 
     # ── Load datasets (both variants share the same raw data) ────────────────
-    print("=== Loading datasets WITHOUT canonicalization ===")
-    train_no = SpectralModelNet10(
+    print(f"=== Loading ModelNet{VARIANT} datasets WITHOUT canonicalization ===")
+    train_no = SpectralModelNet(
         DATA_DIR,
         split="train",
         n_points=N_POINTS,
@@ -102,8 +103,9 @@ def main():
         n_neighbors=N_NEIGHBORS,
         download=True,
         canonicalize=False,
+        variant=VARIANT,
     )
-    test_no = SpectralModelNet10(
+    test_no = SpectralModelNet(
         DATA_DIR,
         split="test",
         n_points=N_POINTS,
@@ -111,11 +113,12 @@ def main():
         n_neighbors=N_NEIGHBORS,
         download=False,
         canonicalize=False,
+        variant=VARIANT,
     )
     print(f"  Train: {len(train_no)}, Test: {len(test_no)}, Classes: {train_no.classes}\n")
 
-    print("=== Loading datasets WITH canonicalization ===")
-    train_canon = SpectralModelNet10(
+    print(f"=== Loading ModelNet{VARIANT} datasets WITH canonicalization ===")
+    train_canon = SpectralModelNet(
         DATA_DIR,
         split="train",
         n_points=N_POINTS,
@@ -123,8 +126,9 @@ def main():
         n_neighbors=N_NEIGHBORS,
         download=False,
         canonicalize=True,
+        variant=VARIANT,
     )
-    test_canon = SpectralModelNet10(
+    test_canon = SpectralModelNet(
         DATA_DIR,
         split="test",
         n_points=N_POINTS,
@@ -132,6 +136,7 @@ def main():
         n_neighbors=N_NEIGHBORS,
         download=False,
         canonicalize=True,
+        variant=VARIANT,
     )
     print(f"  Train: {len(train_canon)}, Test: {len(test_canon)}\n")
 
@@ -177,7 +182,7 @@ def main():
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    fig.suptitle("Spectral Transformer on ModelNet10: Canonicalization Comparison", fontsize=13)
+    fig.suptitle(f"Spectral Transformer on ModelNet{VARIANT}: Canonicalization Comparison", fontsize=13)
     fig.tight_layout()
 
     plot_path = SAVE_DIR / "canonicalization_comparison.png"

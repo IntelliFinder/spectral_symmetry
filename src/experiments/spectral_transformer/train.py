@@ -1,4 +1,4 @@
-"""Training loop for the Spectral Transformer classifier on ModelNet10."""
+"""Training loop for the Spectral Transformer classifier on ModelNet."""
 
 import argparse
 from pathlib import Path
@@ -9,7 +9,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
-from .dataset import SpectralModelNet10
+from .dataset import SpectralModelNet
 from .model import SpectralTransformerClassifier
 
 
@@ -54,22 +54,23 @@ def evaluate(model, loader, device):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Train Spectral Transformer on ModelNet10")
+    parser = argparse.ArgumentParser(description="Train Spectral Transformer on ModelNet")
     parser.add_argument("--data-dir", type=str, default="data", help="Root data directory")
+    parser.add_argument("--variant", type=int, default=40, choices=[10, 40], help="ModelNet variant (10 or 40)")
     parser.add_argument("--n-points", type=int, default=512, help="Points per shape")
     parser.add_argument("--n-eigs", type=int, default=16, help="Number of eigenvectors")
     parser.add_argument("--n-neighbors", type=int, default=12, help="k-NN neighbors for graph")
-    parser.add_argument("--epochs", type=int, default=50, help="Training epochs")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=100, help="Training epochs")
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay")
-    parser.add_argument("--d-model", type=int, default=64, help="Transformer hidden dim")
-    parser.add_argument("--nhead", type=int, default=4, help="Attention heads")
-    parser.add_argument("--num-layers", type=int, default=3, help="Transformer layers")
-    parser.add_argument("--dim-feedforward", type=int, default=128, help="FFN dim")
+    parser.add_argument("--d-model", type=int, default=128, help="Transformer hidden dim")
+    parser.add_argument("--nhead", type=int, default=8, help="Attention heads")
+    parser.add_argument("--num-layers", type=int, default=6, help="Transformer layers")
+    parser.add_argument("--dim-feedforward", type=int, default=512, help="FFN dim")
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--device", type=str, default="auto", help="Device (cpu/cuda/auto)")
-    parser.add_argument("--download", action="store_true", help="Download ModelNet10 if missing")
+    parser.add_argument("--download", action="store_true", help="Download ModelNet if missing")
     parser.add_argument(
         "--canonicalize",
         action="store_true",
@@ -85,8 +86,8 @@ def main(argv=None):
     print(f"Using device: {device}")
 
     # Datasets
-    print("Loading training set...")
-    train_ds = SpectralModelNet10(
+    print(f"Loading ModelNet{args.variant} training set...")
+    train_ds = SpectralModelNet(
         args.data_dir,
         split="train",
         n_points=args.n_points,
@@ -94,9 +95,10 @@ def main(argv=None):
         n_neighbors=args.n_neighbors,
         download=args.download,
         canonicalize=args.canonicalize,
+        variant=args.variant,
     )
-    print("Loading test set...")
-    test_ds = SpectralModelNet10(
+    print(f"Loading ModelNet{args.variant} test set...")
+    test_ds = SpectralModelNet(
         args.data_dir,
         split="test",
         n_points=args.n_points,
@@ -104,6 +106,7 @@ def main(argv=None):
         n_neighbors=args.n_neighbors,
         download=False,
         canonicalize=args.canonicalize,
+        variant=args.variant,
     )
     print(f"Train: {len(train_ds)} shapes, Test: {len(test_ds)} shapes")
     print(f"Classes: {train_ds.classes}")
