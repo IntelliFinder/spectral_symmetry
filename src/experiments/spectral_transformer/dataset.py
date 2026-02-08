@@ -142,6 +142,48 @@ class SpectralModelNet(Dataset):
         )
 
 
+class TruncatedSpectralDataset(Dataset):
+    """Wrapper that returns only the first k eigenvector columns from a SpectralModelNet.
+
+    Parameters
+    ----------
+    base_dataset : SpectralModelNet
+        The wrapped dataset (must have n_eigs >= k).
+    k : int
+        Number of eigenvectors to keep.
+    use_xyz : bool
+        If True, prepend xyz coordinates (columns 0-2). If False, return only
+        eigenvector columns, giving shape ``(n_points, k)``.
+    """
+
+    def __init__(self, base_dataset, k, use_xyz=False):
+        super().__init__()
+        self.base_dataset = base_dataset
+        self.k = k
+        self.use_xyz = use_xyz
+
+    @property
+    def classes(self):
+        return self.base_dataset.classes
+
+    @property
+    def class_to_idx(self):
+        return self.base_dataset.class_to_idx
+
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx):
+        features, mask, label = self.base_dataset[idx]
+        if self.use_xyz:
+            # xyz (cols 0-2) + first k eigenvectors (cols 3 to 3+k)
+            features = torch.cat([features[:, :3], features[:, 3:3 + self.k]], dim=1)
+        else:
+            # only eigenvector columns
+            features = features[:, 3:3 + self.k]
+        return features, mask, label
+
+
 class SpectralModelNet10(SpectralModelNet):
     """Backward-compatible alias for SpectralModelNet with variant=10."""
 
