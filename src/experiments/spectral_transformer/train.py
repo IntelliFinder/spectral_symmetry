@@ -53,6 +53,92 @@ def evaluate(model, loader, device):
     return correct / max(total, 1)
 
 
+def train_one_epoch_dist(model, loader, criterion, optimizer, device):
+    """Train for one epoch with distance-matrix model. Returns average loss."""
+    model.train()
+    total_loss = 0.0
+    n_samples = 0
+    for features, dist_matrix, mask, labels in loader:
+        features = features.to(device)
+        dist_matrix = dist_matrix.to(device)
+        mask = mask.to(device)
+        labels = torch.tensor(labels, dtype=torch.long, device=device)
+
+        logits = model(features, dist_matrix, mask)
+        loss = criterion(logits, labels)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item() * features.size(0)
+        n_samples += features.size(0)
+    return total_loss / max(n_samples, 1)
+
+
+@torch.no_grad()
+def evaluate_dist(model, loader, device):
+    """Evaluate distance-matrix model and return accuracy."""
+    model.eval()
+    correct = 0
+    total = 0
+    for features, dist_matrix, mask, labels in loader:
+        features = features.to(device)
+        dist_matrix = dist_matrix.to(device)
+        mask = mask.to(device)
+        labels = torch.tensor(labels, dtype=torch.long, device=device)
+
+        logits = model(features, dist_matrix, mask)
+        preds = logits.argmax(dim=1)
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
+    return correct / max(total, 1)
+
+
+def train_one_epoch_spectral_dist(model, loader, criterion, optimizer, device):
+    """Train for one epoch with spectral-distance model. Returns average loss."""
+    model.train()
+    total_loss = 0.0
+    n_samples = 0
+    for features, dist_matrix, spectral_dists, mask, labels in loader:
+        features = features.to(device)
+        dist_matrix = dist_matrix.to(device)
+        spectral_dists = spectral_dists.to(device)
+        mask = mask.to(device)
+        labels = torch.tensor(labels, dtype=torch.long, device=device)
+
+        logits = model(features, dist_matrix, spectral_dists, mask)
+        loss = criterion(logits, labels)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item() * features.size(0)
+        n_samples += features.size(0)
+    return total_loss / max(n_samples, 1)
+
+
+@torch.no_grad()
+def evaluate_spectral_dist(model, loader, device):
+    """Evaluate spectral-distance model and return accuracy."""
+    model.eval()
+    correct = 0
+    total = 0
+    for features, dist_matrix, spectral_dists, mask, labels in loader:
+        features = features.to(device)
+        dist_matrix = dist_matrix.to(device)
+        spectral_dists = spectral_dists.to(device)
+        mask = mask.to(device)
+        labels = torch.tensor(labels, dtype=torch.long, device=device)
+
+        logits = model(features, dist_matrix, spectral_dists, mask)
+        preds = logits.argmax(dim=1)
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
+    return correct / max(total, 1)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Train Spectral Transformer on ModelNet")
     parser.add_argument("--data-dir", type=str, default="data", help="Root data directory")
