@@ -50,23 +50,32 @@ def build_graph_laplacian(points, n_neighbors=12):
 
 
 def compute_eigenpairs(L, n_eigs=20):
-    """Compute the smallest eigenpairs of a sparse Laplacian.
+    """Compute the smallest non-trivial eigenpairs of a sparse Laplacian.
+
+    Following Laplacian Eigenmaps (Belkin & Niyogi 2003), the trivial
+    eigenvector (constant, eigenvalue ~0) is excluded. The returned
+    eigenvectors start from the Fiedler vector (second-smallest eigenvalue).
 
     Parameters
     ----------
     L : sparse matrix
     n_eigs : int
+        Number of non-trivial eigenpairs to return.
 
     Returns
     -------
-    eigenvalues : ndarray of shape (n_eigs,)
-    eigenvectors : ndarray of shape (N, n_eigs)
+    eigenvalues : ndarray of shape (<= n_eigs,)
+    eigenvectors : ndarray of shape (N, <= n_eigs)
     """
     n = L.shape[0]
-    k = min(n_eigs, n - 2)  # eigsh needs k < n
+    # Request one extra to account for the trivial eigenvector we'll discard
+    k = min(n_eigs + 1, n - 2)  # eigsh needs k < n
     vals, vecs = sla.eigsh(L, k=k, which='SM', tol=1e-8)
     idx = np.argsort(vals)
-    return vals[idx], vecs[:, idx]
+    vals = vals[idx]
+    vecs = vecs[:, idx]
+    # Skip the trivial eigenvector (eigenvalue ~0, constant vector)
+    return vals[1:], vecs[:, 1:]
 
 
 def uncanonicalizability_score(vec):
@@ -157,7 +166,7 @@ def analyze_spectrum(points, n_eigs=20, n_neighbors=12, threshold=None):
         uncanonicalizable_raw : list of bool, original score-based classification
         uncanonicalizable : list of bool, corrected (excludes repeated eigenvalues)
         component_indices : ndarray
-        spectral_gap : float, lambda_2 - lambda_1
+        spectral_gap : float, smallest non-trivial eigenvalue (Fiedler value)
         threshold_used : float
         multiplicity_info : dict from detect_eigenvalue_multiplicities
     """
@@ -182,7 +191,7 @@ def analyze_spectrum(points, n_eigs=20, n_neighbors=12, threshold=None):
         for i, raw in enumerate(uncanonicalizable_raw)
     ]
 
-    spectral_gap = float(eigenvalues[1] - eigenvalues[0]) if len(eigenvalues) > 1 else 0.0
+    spectral_gap = float(eigenvalues[0]) if len(eigenvalues) > 0 else 0.0
 
     return {
         'eigenvalues': eigenvalues,

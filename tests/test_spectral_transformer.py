@@ -375,3 +375,343 @@ class TestPointCloudFeatures:
         np.testing.assert_allclose(np.diag(dist_matrix), 0.0, atol=1e-7)
         # Should be symmetric
         np.testing.assert_allclose(dist_matrix, dist_matrix.T, atol=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# Canonicalization tests
+# ---------------------------------------------------------------------------
+class TestCanonicalization:
+    """Verify max-absolute-value sign canonicalization."""
+
+    def test_flips_negative_dominant_entry(self):
+        """If the max-abs entry is negative and unique, the eigenvector should be flipped."""
+        from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
+
+        # Eigenvector where the max-abs entry is negative
+        v = np.array([[0.1], [-0.9], [0.2], [0.3]])
+        result = canonicalize_eigenvectors(v)
+        # Should flip: max-abs is -0.9 at index 1, unique → flip to positive
+        assert result[1, 0] > 0, f"Expected positive, got {result[1, 0]}"
+        np.testing.assert_allclose(result, -v, atol=1e-12)
+
+    def test_keeps_positive_dominant_entry(self):
+        """If the max-abs entry is already positive and unique, no flip."""
+        from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
+
+        v = np.array([[0.1], [0.9], [0.2], [0.3]])
+        result = canonicalize_eigenvectors(v)
+        np.testing.assert_allclose(result, v, atol=1e-12)
+
+    def test_no_flip_when_max_abs_repeats(self):
+        """If the max-abs value appears more than once, keep eigenvector unchanged."""
+        from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
+
+        # Two entries with the same absolute value 0.5
+        v = np.array([[0.5], [-0.5], [0.1], [0.2]])
+        result = canonicalize_eigenvectors(v)
+        np.testing.assert_allclose(result, v, atol=1e-12)
+
+    def test_multiple_columns(self):
+        """Test canonicalization across multiple eigenvector columns."""
+        from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
+
+        eigvecs = np.array([
+            [0.1, -0.8, 0.5],
+            [-0.9, 0.2, -0.5],
+            [0.2, 0.1, 0.3],
+        ])
+        result = canonicalize_eigenvectors(eigvecs)
+
+        # Col 0: max-abs is -0.9 (unique) → flip
+        assert result[1, 0] > 0
+        # Col 1: max-abs is -0.8 (unique) → flip
+        assert result[0, 1] > 0
+        # Col 2: max-abs is 0.5 and -0.5 (repeats) → no flip
+        np.testing.assert_allclose(result[:, 2], eigvecs[:, 2], atol=1e-12)
+
+    def test_does_not_modify_input(self):
+        """Canonicalization should return a copy, not modify in place."""
+        from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
+
+        v = np.array([[0.1], [-0.9], [0.2]])
+        v_orig = v.copy()
+        _ = canonicalize_eigenvectors(v)
+        np.testing.assert_allclose(v, v_orig, atol=1e-12)
+
+    def test_deterministic(self):
+        """Same input always produces the same output (no randomness)."""
+        from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
+
+        rng = np.random.RandomState(42)
+        v = rng.randn(50, 8)
+        r1 = canonicalize_eigenvectors(v)
+        r2 = canonicalize_eigenvectors(v)
+        np.testing.assert_allclose(r1, r2, atol=1e-12)
+
+    def test_idempotent(self):
+        """Applying canonicalization twice gives the same result as once."""
+        from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
+
+        rng = np.random.RandomState(42)
+        v = rng.randn(50, 8)
+        r1 = canonicalize_eigenvectors(v)
+        r2 = canonicalize_eigenvectors(r1)
+        np.testing.assert_allclose(r1, r2, atol=1e-12)
+
+    def test_sign_invariance(self):
+        """Canonicalizing v and -v should give the same result (when max-abs is unique)."""
+        from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
+
+        # Single column with a unique max-abs entry
+        v = np.array([[0.1], [-0.9], [0.2], [0.3]])
+        r_pos = canonicalize_eigenvectors(v)
+        r_neg = canonicalize_eigenvectors(-v)
+        np.testing.assert_allclose(r_pos, r_neg, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Laplacian Eigenmaps verification tests
+# ---------------------------------------------------------------------------
+@skip_no_torch
+class TestLaplacianEigenmaps:
+    """Verify that positional encodings follow the Laplacian Eigenmaps definition.
+
+    Per Belkin & Niyogi (2003), the embedding for node i should be:
+        y_i = (v_2[i], v_3[i], ..., v_{k+1}[i])
+    where v_1, v_2, ..., v_n are eigenvectors of L = D - A sorted by ascending
+    eigenvalue, and v_1 is the trivial constant eigenvector (eigenvalue 0)
+    which is EXCLUDED from the embedding.
+    """
+
+    def test_laplacian_is_d_minus_a(self):
+        """Verify L = D - A (unnormalized graph Laplacian)."""
+        from src.spectral_core import build_graph_laplacian
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(60, 3)
+
+        L, comp_idx = build_graph_laplacian(points, n_neighbors=10)
+        L_dense = L.toarray()
+
+        # Recover A from L: off-diagonal of L is -A
+        A = -L_dense.copy()
+        np.fill_diagonal(A, 0)
+
+        # A should be non-negative (binary adjacency)
+        assert np.all(A >= 0), "Adjacency should be non-negative"
+
+        # A should be symmetric
+        np.testing.assert_allclose(A, A.T, atol=1e-12)
+
+        # D = diag(row sums of A)
+        D = np.diag(A.sum(axis=1))
+
+        # L should equal D - A
+        np.testing.assert_allclose(L_dense, D - A, atol=1e-12,
+                                   err_msg="Laplacian should be D - A")
+
+    def test_laplacian_rows_sum_to_zero(self):
+        """Each row of L = D - A should sum to zero."""
+        from src.spectral_core import build_graph_laplacian
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(60, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        row_sums = np.array(L.sum(axis=1)).flatten()
+        np.testing.assert_allclose(row_sums, 0.0, atol=1e-12,
+                                   err_msg="Laplacian rows should sum to zero")
+
+    def test_eigenvalues_sorted_ascending(self):
+        """Eigenvalues from compute_eigenpairs should be sorted smallest first."""
+        from src.spectral_core import build_graph_laplacian, compute_eigenpairs
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(80, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        eigenvalues, _ = compute_eigenpairs(L, n_eigs=10)
+
+        for i in range(len(eigenvalues) - 1):
+            assert eigenvalues[i] <= eigenvalues[i + 1] + 1e-10, \
+                f"Eigenvalues not sorted: λ_{i}={eigenvalues[i]} > λ_{i+1}={eigenvalues[i+1]}"
+
+    def test_laplacian_has_zero_eigenvalue(self):
+        """For a connected graph, the Laplacian has eigenvalue 0 with constant eigenvector.
+
+        This tests the raw Laplacian (not compute_eigenpairs, which excludes the trivial one).
+        """
+        import scipy.sparse.linalg as sla
+
+        from src.spectral_core import build_graph_laplacian
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(80, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        vals, vecs = sla.eigsh(L, k=3, which='SM', tol=1e-8)
+        vals = np.sort(vals)
+
+        assert abs(vals[0]) < 1e-6, \
+            f"Laplacian should have eigenvalue ~0, got {vals[0]}"
+
+    def test_trivial_eigenvector_is_approximately_constant(self):
+        """The Laplacian's zero-eigenvalue eigenvector should be approximately constant.
+
+        Tests the raw eigsh output directly (compute_eigenpairs excludes this vector).
+        """
+        import scipy.sparse.linalg as sla
+
+        from src.spectral_core import build_graph_laplacian
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(80, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        vals, vecs = sla.eigsh(L, k=3, which='SM', tol=1e-8)
+        idx = np.argsort(vals)
+        v0 = vecs[:, idx[0]]
+
+        v0_normalized = v0 / np.linalg.norm(v0)
+        expected_constant = np.ones_like(v0_normalized) / np.sqrt(len(v0_normalized))
+
+        np.testing.assert_allclose(
+            np.abs(v0_normalized), np.abs(expected_constant), atol=1e-4,
+            err_msg="Trivial eigenvector should be approximately constant"
+        )
+
+    def test_eigenvectors_satisfy_eigenvalue_equation(self):
+        """Each eigenvector should satisfy Lv = λv."""
+        from src.spectral_core import build_graph_laplacian, compute_eigenpairs
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(80, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        eigenvalues, eigenvectors = compute_eigenpairs(L, n_eigs=8)
+
+        L_dense = L.toarray()
+        for i in range(eigenvectors.shape[1]):
+            v = eigenvectors[:, i]
+            lam = eigenvalues[i]
+            Lv = L_dense @ v
+            np.testing.assert_allclose(
+                Lv, lam * v, atol=1e-6,
+                err_msg=f"Eigenvector {i} does not satisfy Lv = λv"
+            )
+
+    def test_eigenvectors_are_orthonormal(self):
+        """Eigenvectors should be orthonormal (V^T V = I)."""
+        from src.spectral_core import build_graph_laplacian, compute_eigenpairs
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(80, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        _, eigenvectors = compute_eigenpairs(L, n_eigs=8)
+
+        gram = eigenvectors.T @ eigenvectors
+        np.testing.assert_allclose(
+            gram, np.eye(eigenvectors.shape[1]), atol=1e-6,
+            err_msg="Eigenvectors should be orthonormal"
+        )
+
+    def test_node_encoding_is_ith_entry_of_eigenvectors(self):
+        """Node i's encoding should be [v_1[i], v_2[i], ..., v_k[i]].
+
+        Verifies that features[i, 3:3+k] == eigenvectors[i, :] as stored
+        in the SpectralModelNet dataset pipeline.
+        """
+        from src.preprocessing import center_and_normalize, random_subsample
+        from src.spectral_core import build_graph_laplacian, compute_eigenpairs
+
+        rng = np.random.RandomState(7)
+        points = rng.randn(50, 3).astype(np.float64)
+        points = random_subsample(points, 50, seed=0)
+        points, _, _ = center_and_normalize(points)
+
+        n_eigs = 8
+        L, comp_idx = build_graph_laplacian(points, n_neighbors=12)
+        eigenvalues, eigenvectors = compute_eigenpairs(L, n_eigs=n_eigs)
+
+        pts_cc = points[comp_idx]
+        n_actual = pts_cc.shape[0]
+        k = eigenvectors.shape[1]
+
+        # Build features the same way SpectralModelNet does
+        n_points = 64
+        features = np.zeros((n_points, 3 + n_eigs), dtype=np.float32)
+        features[:n_actual, :3] = pts_cc.astype(np.float32)
+        features[:n_actual, 3:3 + k] = eigenvectors.astype(np.float32)
+
+        # For each valid node i, features[i, 3:3+k] should be the i-th row of eigenvectors
+        for i in range(n_actual):
+            for j in range(k):
+                assert abs(features[i, 3 + j] - eigenvectors[i, j]) < 1e-6, \
+                    f"Node {i}, eigvec {j}: feature={features[i, 3+j]}, expected={eigenvectors[i, j]}"
+
+    def test_compute_eigenpairs_excludes_trivial_eigenvector(self):
+        """compute_eigenpairs should exclude the trivial constant eigenvector.
+
+        Per Laplacian Eigenmaps (Belkin & Niyogi 2003), the trivial constant
+        eigenvector (eigenvalue 0) is excluded. The first returned eigenvector
+        should be the Fiedler vector (eigenvalue > 0).
+        """
+        from src.spectral_core import build_graph_laplacian, compute_eigenpairs
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(80, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        eigenvalues, eigenvectors = compute_eigenpairs(L, n_eigs=5)
+
+        # The first eigenvalue should be the Fiedler value (> 0), NOT ~0
+        assert eigenvalues[0] > 0.01, \
+            f"First eigenvalue should be Fiedler value (> 0), got {eigenvalues[0]}"
+
+        # The first eigenvector should NOT be constant
+        v0 = eigenvectors[:, 0]
+        v0_std = np.std(v0)
+        assert v0_std > 0.01, \
+            f"First eigenvector should not be constant (std={v0_std})"
+
+        # Should have both positive and negative entries (Fiedler vector)
+        assert np.any(v0 > 0) and np.any(v0 < 0), \
+            "First eigenvector should be the Fiedler vector with both signs"
+
+        # Should return exactly n_eigs eigenvectors
+        assert len(eigenvalues) == 5
+        assert eigenvectors.shape[1] == 5
+
+    def test_first_returned_eigenvalue_is_fiedler(self):
+        """After excluding trivial, the first eigenvalue should be the Fiedler value (> 0),
+        and its eigenvector should have both positive and negative entries."""
+        from src.spectral_core import build_graph_laplacian, compute_eigenpairs
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(80, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        eigenvalues, eigenvectors = compute_eigenpairs(L, n_eigs=5)
+
+        # First returned eigenvalue is the Fiedler value (> 0)
+        assert eigenvalues[0] > 1e-6, \
+            f"Fiedler value should be > 0, got {eigenvalues[0]}"
+
+        # Fiedler vector should have both signs (graph partitioning)
+        v_fiedler = eigenvectors[:, 0]
+        assert np.any(v_fiedler > 0) and np.any(v_fiedler < 0), \
+            "Fiedler vector should have both positive and negative entries"
+
+    def test_all_returned_eigenvalues_positive(self):
+        """All returned eigenvalues should be > 0 (trivial excluded)."""
+        from src.spectral_core import build_graph_laplacian, compute_eigenpairs
+
+        rng = np.random.RandomState(42)
+        points = rng.randn(80, 3)
+
+        L, _ = build_graph_laplacian(points, n_neighbors=10)
+        eigenvalues, _ = compute_eigenpairs(L, n_eigs=5)
+
+        assert np.all(eigenvalues > 1e-6), \
+            f"All eigenvalues should be > 0 after excluding trivial, got {eigenvalues}"

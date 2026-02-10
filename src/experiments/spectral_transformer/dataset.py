@@ -15,6 +15,38 @@ from src.spectral_core import (
 )
 
 
+def canonicalize_eigenvectors(eigenvectors):
+    """Canonicalize eigenvector signs using the max-absolute-value entry.
+
+    For each eigenvector column, find the entry with the largest absolute
+    value. If that entry is unique (no other entry has the same absolute
+    value), flip the eigenvector so that entry is positive. If the max
+    absolute value is not unique, leave the eigenvector unchanged.
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (N, k)
+
+    Returns
+    -------
+    eigenvectors : ndarray of shape (N, k), sign-canonicalized copy.
+    """
+    eigenvectors = eigenvectors.copy()
+    for j in range(eigenvectors.shape[1]):
+        col = eigenvectors[:, j]
+        abs_col = np.abs(col)
+        max_abs = abs_col.max()
+        # Count how many entries achieve the max absolute value
+        mask = np.isclose(abs_col, max_abs, rtol=1e-8, atol=1e-12)
+        if mask.sum() == 1:
+            # Unique max-abs entry: flip so it's positive
+            idx = np.argmax(abs_col)
+            if col[idx] < 0:
+                eigenvectors[:, j] = -col
+        # else: max abs value is not unique, keep as is
+    return eigenvectors
+
+
 class SpectralModelNet(Dataset):
     """ModelNet shapes with pre-computed spectral positional encodings.
 
@@ -108,11 +140,9 @@ class SpectralModelNet(Dataset):
                 n_skipped += 1
                 continue
 
-            # Sign canonicalization: flip each eigenvector so its entry sum is non-negative
+            # Sign canonicalization: flip by sign of max-absolute-value entry
             if canonicalize:
-                signs = np.sign(eigenvectors.sum(axis=0))
-                signs[signs == 0] = 1.0
-                eigenvectors = eigenvectors * signs
+                eigenvectors = canonicalize_eigenvectors(eigenvectors)
 
             # Keep only the largest connected component
             pts_cc = points[comp_idx]  # (N', 3)
@@ -361,7 +391,8 @@ class SpectralNodeModelNet(Dataset):
 
     Combines spectral node features (xyz + eigenvectors) with k-NN distance
     matrices for use with distance-modulated attention. Eigenvector signs are
-    canonicalized so that the sum of entries is non-negative.
+    canonicalized by flipping so the entry with the largest absolute value is
+    positive (if that entry is unique).
 
     Returns a 4-tuple per item:
     ``(features, dist_matrix, mask, label)`` where:
@@ -425,10 +456,8 @@ class SpectralNodeModelNet(Dataset):
                 n_skipped += 1
                 continue
 
-            # Canonicalize signs: flip so entry sum is non-negative
-            signs = np.sign(eigenvectors.sum(axis=0))
-            signs[signs == 0] = 1.0
-            eigenvectors = eigenvectors * signs
+            # Canonicalize signs: flip by sign of max-absolute-value entry
+            eigenvectors = canonicalize_eigenvectors(eigenvectors)
 
             pts_cc = points[comp_idx]
             n_actual = pts_cc.shape[0]
