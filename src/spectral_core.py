@@ -21,13 +21,18 @@ def _largest_connected_component(adjacency):
     return adjacency[np.ix_(indices, indices)], indices
 
 
-def build_graph_laplacian(points, n_neighbors=12):
+def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None):
     """Build a symmetric k-NN graph and return the sparse graph Laplacian L = D - A.
 
     Parameters
     ----------
     points : ndarray of shape (N, D)
     n_neighbors : int
+    weighted : bool
+        If True, use Gaussian kernel weights instead of binary adjacency.
+    sigma : float or None
+        Bandwidth for Gaussian kernel. If None and weighted=True, uses the
+        median of nonzero distances.
 
     Returns
     -------
@@ -36,9 +41,20 @@ def build_graph_laplacian(points, n_neighbors=12):
     """
     n_points = points.shape[0]
     k = min(n_neighbors, n_points - 1)
-    A = kneighbors_graph(points, n_neighbors=k, mode='connectivity', include_self=False)
-    A = 0.5 * (A + A.T)  # symmetrize
-    A = (A > 0).astype(float)  # binary
+
+    if weighted:
+        A = kneighbors_graph(points, n_neighbors=k, mode="distance", include_self=False)
+        A = 0.5 * (A + A.T)  # symmetrize (take max of pairwise distances)
+        # Keep only nonzero structure for the Gaussian kernel
+        A = sp.csr_matrix(A)
+        if sigma is None:
+            sigma = float(np.median(A.data))
+        # Apply Gaussian kernel: exp(-d^2 / (2 * sigma^2))
+        A.data = np.exp(-(A.data**2) / (2.0 * sigma**2))
+    else:
+        A = kneighbors_graph(points, n_neighbors=k, mode="connectivity", include_self=False)
+        A = 0.5 * (A + A.T)  # symmetrize
+        A = (A > 0).astype(float)  # binary
 
     A, component_indices = _largest_connected_component(A)
     A = sp.csr_matrix(A)
@@ -70,7 +86,7 @@ def compute_eigenpairs(L, n_eigs=20):
     n = L.shape[0]
     # Request one extra to account for the trivial eigenvector we'll discard
     k = min(n_eigs + 1, n - 2)  # eigsh needs k < n
-    vals, vecs = sla.eigsh(L, k=k, which='SM', tol=1e-8)
+    vals, vecs = sla.eigsh(L, k=k, which="SM", tol=1e-8)
     idx = np.argsort(vals)
     vals = vals[idx]
     vecs = vecs[:, idx]
@@ -138,10 +154,10 @@ def detect_eigenvalue_multiplicities(eigenvalues, rtol=1e-3):
     n_non_repeating = sum(1 for m in multiplicity if m == 1)
 
     return {
-        'multiplicity': multiplicity,
-        'group_indices': group_indices,
-        'n_repeating': n_repeating,
-        'n_non_repeating': n_non_repeating,
+        "multiplicity": multiplicity,
+        "group_indices": group_indices,
+        "n_repeating": n_repeating,
+        "n_non_repeating": n_non_repeating,
     }
 
 
@@ -177,8 +193,7 @@ def analyze_spectrum(points, n_eigs=20, n_neighbors=12, threshold=None):
     if threshold is None:
         threshold = 5.0 / np.sqrt(n_points)
 
-    scores = [uncanonicalizability_score(eigenvectors[:, i])
-              for i in range(eigenvectors.shape[1])]
+    scores = [uncanonicalizability_score(eigenvectors[:, i]) for i in range(eigenvectors.shape[1])]
     uncanonicalizable_raw = [s < threshold for s in scores]
 
     # Multiplicity detection
@@ -187,20 +202,19 @@ def analyze_spectrum(points, n_eigs=20, n_neighbors=12, threshold=None):
     # Corrected uncanonicalizable: exclude eigenvectors belonging to repeated eigenvalues
     # (sign ambiguity from multiplicity is a different phenomenon than from symmetry)
     uncanonicalizable = [
-        (raw and mult_info['multiplicity'][i] == 1)
-        for i, raw in enumerate(uncanonicalizable_raw)
+        (raw and mult_info["multiplicity"][i] == 1) for i, raw in enumerate(uncanonicalizable_raw)
     ]
 
     spectral_gap = float(eigenvalues[0]) if len(eigenvalues) > 0 else 0.0
 
     return {
-        'eigenvalues': eigenvalues,
-        'eigenvectors': eigenvectors,
-        'scores': scores,
-        'uncanonicalizable_raw': uncanonicalizable_raw,
-        'uncanonicalizable': uncanonicalizable,
-        'component_indices': comp_idx,
-        'spectral_gap': spectral_gap,
-        'threshold_used': threshold,
-        'multiplicity_info': mult_info,
+        "eigenvalues": eigenvalues,
+        "eigenvectors": eigenvectors,
+        "scores": scores,
+        "uncanonicalizable_raw": uncanonicalizable_raw,
+        "uncanonicalizable": uncanonicalizable,
+        "component_indices": comp_idx,
+        "spectral_gap": spectral_gap,
+        "threshold_used": threshold,
+        "multiplicity_info": mult_info,
     }
