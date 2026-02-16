@@ -1,0 +1,12 @@
+{
+  "best_test_acc": 0.5892070484581498,
+  "dataset": "ModelNet10",
+  "scaling_mode": "learnable",
+  "n_eigs": 8,
+  "canonicalization": "spielman",
+  "weighted": false,
+  "hidden_dim": 256,
+  "epochs": 100,
+  "batch_size": 32,
+  "lr": 0.001
+}

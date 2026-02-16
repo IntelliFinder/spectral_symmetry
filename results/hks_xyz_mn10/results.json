@@ -1,0 +1,14 @@
+{
+  "best_test_acc": 0.7973568281938326,
+  "dataset": "ModelNet10",
+  "n_eigs": 32,
+  "n_neighbors": 30,
+  "n_times": 16,
+  "weighted": true,
+  "normalized": true,
+  "include_xyz": true,
+  "hidden_dim": 256,
+  "epochs": 100,
+  "batch_size": 32,
+  "lr": 0.001
+}

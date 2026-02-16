@@ -1,0 +1,15 @@
+{
+  "best_test_acc": 0.22687224669603523,
+  "dataset": "ModelNet10",
+  "scaling_mode": "fixed",
+  "n_eigs": 8,
+  "canonicalization": "spielman",
+  "weighted": false,
+  "include_xyz": true,
+  "use_spectrum": false,
+  "spectrum_only": true,
+  "hidden_dim": 256,
+  "epochs": 100,
+  "batch_size": 32,
+  "lr": 0.001
+}

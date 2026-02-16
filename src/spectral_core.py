@@ -21,8 +21,12 @@ def _largest_connected_component(adjacency):
     return adjacency[np.ix_(indices, indices)], indices
 
 
-def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None):
-    """Build a symmetric k-NN graph and return the sparse graph Laplacian L = D - A.
+def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None, normalized=False):
+    """Build a symmetric k-NN graph and return the sparse graph Laplacian.
+
+    By default computes the combinatorial Laplacian L = D - A.
+    When ``normalized=True``, computes the symmetric normalized Laplacian
+    L_norm = I - D^{-1/2} A D^{-1/2}.
 
     Parameters
     ----------
@@ -33,6 +37,8 @@ def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None):
     sigma : float or None
         Bandwidth for Gaussian kernel. If None and weighted=True, uses the
         median of nonzero distances.
+    normalized : bool
+        If True, return the symmetric normalized Laplacian.
 
     Returns
     -------
@@ -44,7 +50,8 @@ def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None):
 
     if weighted:
         A = kneighbors_graph(points, n_neighbors=k, mode="distance", include_self=False)
-        A = 0.5 * (A + A.T)  # symmetrize (take max of pairwise distances)
+        A = sp.csr_matrix(A)
+        A = A.maximum(A.T)  # symmetrize via element-wise max (not average)
         # Keep only nonzero structure for the Gaussian kernel
         A = sp.csr_matrix(A)
         if sigma is None:
@@ -60,23 +67,37 @@ def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None):
     A = sp.csr_matrix(A)
 
     degrees = np.array(A.sum(axis=1)).flatten()
-    D = sp.diags(degrees)
-    L = D - A
+
+    if normalized:
+        # Symmetric normalized Laplacian: L_norm = I - D^{-1/2} A D^{-1/2}
+        d_inv_sqrt = np.zeros_like(degrees)
+        nonzero = degrees > 0
+        d_inv_sqrt[nonzero] = 1.0 / np.sqrt(degrees[nonzero])
+        D_inv_sqrt = sp.diags(d_inv_sqrt)
+        L = sp.eye(A.shape[0]) - D_inv_sqrt @ A @ D_inv_sqrt
+    else:
+        D = sp.diags(degrees)
+        L = D - A
+
     return L, component_indices
 
 
-def compute_eigenpairs(L, n_eigs=20):
+def compute_eigenpairs(L, n_eigs=20, trivial_threshold=1e-6):
     """Compute the smallest non-trivial eigenpairs of a sparse Laplacian.
 
-    Following Laplacian Eigenmaps (Belkin & Niyogi 2003), the trivial
-    eigenvector (constant, eigenvalue ~0) is excluded. The returned
-    eigenvectors start from the Fiedler vector (second-smallest eigenvalue).
+    Following Laplacian Eigenmaps (Belkin & Niyogi 2003), trivial
+    eigenvectors (eigenvalue below ``trivial_threshold``) are excluded.
+    For a connected graph this removes only the constant eigenvector;
+    for near-disconnected graphs it removes all near-zero modes.
 
     Parameters
     ----------
     L : sparse matrix
     n_eigs : int
         Number of non-trivial eigenpairs to return.
+    trivial_threshold : float
+        Eigenvalues at or below this value are considered trivial and
+        discarded.  Default 1e-6.
 
     Returns
     -------
@@ -84,14 +105,66 @@ def compute_eigenpairs(L, n_eigs=20):
     eigenvectors : ndarray of shape (N, <= n_eigs)
     """
     n = L.shape[0]
-    # Request one extra to account for the trivial eigenvector we'll discard
+    # Request extras to account for trivial eigenvectors we'll discard
     k = min(n_eigs + 1, n - 2)  # eigsh needs k < n
     vals, vecs = sla.eigsh(L, k=k, which="SM", tol=1e-8)
     idx = np.argsort(vals)
     vals = vals[idx]
     vecs = vecs[:, idx]
-    # Skip the trivial eigenvector (eigenvalue ~0, constant vector)
-    return vals[1:], vecs[:, 1:]
+    # Skip trivial eigenvectors (eigenvalue <= threshold)
+    nontrivial = vals > trivial_threshold
+    vals = vals[nontrivial]
+    vecs = vecs[:, nontrivial]
+    # Return up to n_eigs
+    return vals[:n_eigs], vecs[:, :n_eigs]
+
+
+def compute_hks(eigenvalues, eigenvectors, n_times=16, t_min=None, t_max=None):
+    """Compute Heat Kernel Signature for each point.
+
+    HKS is a sign-invariant per-point descriptor:
+    ``HKS(i, t) = sum_k exp(-lambda_k * t) * v_k(i)^2``
+
+    Parameters
+    ----------
+    eigenvalues : ndarray of shape (k,)
+        Non-trivial eigenvalues (positive).
+    eigenvectors : ndarray of shape (N, k)
+        Corresponding eigenvectors.
+    n_times : int
+        Number of time samples (output feature dimension).
+    t_min : float or None
+        Minimum time. If None, uses ``4 * ln(10) / eigenvalues[-1]``.
+    t_max : float or None
+        Maximum time. If None, uses ``4 * ln(10) / eigenvalues[0]``.
+
+    Returns
+    -------
+    hks : ndarray of shape (N, n_times)
+        Heat kernel signature at each point for each time scale.
+    """
+    if len(eigenvalues) == 0:
+        # No non-trivial eigenvalues — return zeros
+        N = eigenvectors.shape[0] if eigenvectors.ndim == 2 else 0
+        return np.zeros((N, n_times), dtype=np.float32)
+
+    evals = np.clip(eigenvalues, 1e-8, None)
+    if t_min is None:
+        t_min = 4.0 * np.log(10) / evals[-1]
+    if t_max is None:
+        t_max = 4.0 * np.log(10) / evals[0]
+
+    times = np.geomspace(t_min, t_max, n_times)  # log-spaced
+
+    # HKS(i, t) = sum_k exp(-lambda_k * t) * v_k(i)^2
+    V_sq = eigenvectors**2  # (N, k) -- sign invariant
+
+    hks = np.zeros((eigenvectors.shape[0], n_times), dtype=np.float32)
+    for j, t in enumerate(times):
+        weights = np.exp(-evals * t)  # (k,)
+        hks[:, j] = V_sq @ weights  # (N,)
+
+    return hks
 
 
 def uncanonicalizability_score(vec):
