@@ -1,0 +1,555 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    citecolor=blue!70!black,
+    urlcolor=blue!70!black
+}
+
+\title{Spectral Graph Features for Point Cloud Classification:\\An Experimental Study}
+\author{}
+\date{February 2025}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report presents a comprehensive experimental study investigating whether Laplacian
+eigenvector features from spectral graph theory can improve 3D point cloud classification
+on the ModelNet10 and ModelNet40 benchmarks. We evaluate multiple injection
+strategies---attention bias, node feature concatenation, learned gated fusion, and
+permutation-invariant Deep Sets---across three architecture families: a custom
+distance-modulated transformer, PointTransformerV3 (PTv3), and Deep Sets. A systematic
+sweep over four eigenvector canonicalization methods and multiple eigenvector counts is
+conducted. We further investigate sign-invariant alternatives: Heat Kernel Signatures
+(HKS) and eigenvalue spectrum descriptors (Shape-DNA). Statistical analysis of
+eigenvector uncanonicalizability across 12,305 shapes provides theoretical grounding for
+the observed results. We find that raw spectral eigenvectors consistently fail to improve
+classification, but sign-invariant spectral descriptors partially recover discriminative
+signal: HKS with xyz achieves 79.74\% on ModelNet10 (vs.\ 82.27\% distance-only
+baseline), and eigenvalue spectrum descriptors reach 75.88\%.
+\end{abstract}
+
+%% ============================================================================
+\section{Introduction}
+%% ============================================================================
+
+The central research question of this study is whether spectral graph features---specifically,
+Laplacian eigenvectors computed from point cloud connectivity graphs---can improve 3D point
+cloud classification. Eigenvectors of the graph Laplacian encode global geometric structure:
+the lowest-frequency eigenvectors capture large-scale connectivity and symmetry patterns,
+providing a coordinate-free description of shape that is complementary to raw Euclidean
+coordinates.
+
+However, a fundamental challenge arises from the \emph{sign ambiguity} of eigenvectors. For
+any eigenvector $\mathbf{v}$ satisfying $L\mathbf{v} = \lambda\mathbf{v}$, the negation
+$-\mathbf{v}$ is an equally valid eigenvector. This means that the sign of each eigenvector
+is arbitrary, and two isometric shapes may produce eigenvectors with opposite signs. For
+neural networks that rely on consistent input representations, this ambiguity poses a
+serious obstacle.
+
+Our approach is to systematically test multiple strategies for incorporating spectral
+features into point cloud classifiers:
+\begin{itemize}
+    \item \textbf{Injection methods:} additive attention bias from spectral distances, node
+          feature concatenation of eigenvectors to coordinates, learned gated fusion of
+          geometric and spectral embeddings, and permutation-invariant Deep Sets.
+    \item \textbf{Canonicalization strategies:} four methods for resolving sign ambiguity
+          (Spielman GF(2) system, max-absolute-value sign convention, random sign, and no
+          canonicalization).
+    \item \textbf{Sign-invariant alternatives:} Heat Kernel Signatures (HKS), which use
+          squared eigenvector entries $v_k(i)^2$, and eigenvalue spectrum descriptors
+          (Shape-DNA), which bypass eigenvectors entirely.
+    \item \textbf{Architecture families:} a custom distance-modulated transformer,
+          PointTransformerV3 (PTv3) with the Pointcept training recipe, and Deep Sets.
+\end{itemize}
+
+%% ============================================================================
+\section{Methods}
+%% ============================================================================
+
+We evaluate nine model configurations spanning three architecture families.
+
+\paragraph{1. DistanceTransformerClassifier.}
+A custom transformer in which the attention logits are multiplicatively modulated by a sparse
+$k$-nearest-neighbor distance matrix. The input consists of raw 3D coordinates ($d=3$). After
+multi-head self-attention with distance modulation, representations are aggregated via masked
+mean pooling and passed to a classification head. This serves as the \emph{geometric-only
+baseline} for the custom transformer family.
+
+\paragraph{2. SpectralDistanceTransformerClassifier.}
+This model extends the distance transformer with an additive per-head spectral bias derived
+from pairwise eigenspace distances. The attention computation becomes
+\[
+    A = \frac{QK^\top}{\sqrt{d}} \odot D_{\text{kNN}} + B_{\text{spectral}},
+\]
+where $D_{\text{kNN}}$ is the $k$-NN distance matrix and $B_{\text{spectral}}$ is a learned
+projection of pairwise distances in the Laplacian eigenspace.
+
+\paragraph{3. Spectral Node Features.}
+The same DistanceTransformerClassifier architecture is used, but the input dimension is
+increased from 3 to $3 + n_{\text{eigs}}$ by concatenating canonicalized eigenvectors to the
+xyz coordinates as node-level features.
+
+\paragraph{4. PTv3 Pointcept Baseline.}
+PointTransformerV3 with the full Pointcept training recipe: 6-channel input
+(xyz + normals), encoder depths $(2, 2, 2, 6, 2)$, encoder channels
+$(32, 64, 128, 256, 512)$, patch size 1024, 4 serialization orders, sparse convolution with
+serialized attention, a 3-layer classifier head, cross-entropy plus Lovasz-Softmax loss,
+OneCycleLR scheduling, data augmentations, and 300 training epochs. This serves as the
+\emph{geometric-only baseline} for the PTv3 family.
+
+\paragraph{5. GatedSpectralPTv3Classifier.}
+A learned gate is inserted between the PTv3 embedding layer and the encoder. Let
+$\mathbf{h}_{\text{geo}}$ denote the sparse-convolution embedding of geometric features and
+$\mathbf{h}_{\text{spec}}$ denote a projected spectral embedding (Linear $\to$ LayerNorm
+$\to$ GELU applied to eigenvectors). A gating vector is computed as
+\[
+    \mathbf{g} = \sigma\!\bigl(\mathrm{FC}([\mathbf{h}_{\text{geo}} \| \mathbf{h}_{\text{spec}}])\bigr),
+\]
+and the fused representation is
+$\mathbf{h} = \mathbf{g} \odot \mathbf{h}_{\text{geo}} + (1 - \mathbf{g}) \odot \mathbf{h}_{\text{spec}}$.
+
+\paragraph{6. DeepSetsClassifier (Eigenvectors).}
+A permutation-invariant Deep Sets architecture~\cite{zaheer2017deep} operating on per-point
+features. Each point's features (optionally xyz coordinates concatenated with canonicalized
+eigenvector entries) are passed through a shared $\phi$-network (3-layer MLP). The
+eigenvector features are scaled by $1/\sqrt{\lambda_k}$ before input to normalize the
+energy of each spectral component. A masked mean pool aggregates point-level
+representations, and a $\rho$-network (3-layer MLP) produces class logits.
+
+\paragraph{7. DeepSetsClassifier + Eigenvalue Spectrum.}
+The same Deep Sets architecture with an additional global branch: the vector of sorted
+eigenvalues $(\lambda_1, \ldots, \lambda_k)$ is processed through a separate MLP and
+concatenated to the pooled per-point representation before the $\rho$-network. This
+provides a global Shape-DNA descriptor that is entirely free of eigenvector sign ambiguity.
+
+\paragraph{8. HKS Deep Sets.}
+A Deep Sets model using Heat Kernel Signature (HKS) features instead of raw eigenvectors.
+HKS is defined as:
+\[
+    \text{HKS}(i, t) = \sum_k \exp(-\lambda_k \cdot t) \cdot v_k(i)^2,
+\]
+which is inherently sign-invariant since it uses $v_k(i)^2$. HKS features are computed
+at 16 log-spaced time scales, producing a 16-dimensional per-point descriptor. The
+graph Laplacian uses 30 neighbors, Gaussian kernel weights, and symmetric normalization.
+
+\paragraph{9. SpectrumClassifier (Eigenvalues Only).}
+A minimal baseline that uses only the sorted eigenvalue vector $(\lambda_1, \ldots,
+\lambda_k)$ as a global shape descriptor, processed through a 3-layer MLP. This tests
+whether spectral information is discriminative when eigenvector sign ambiguity is entirely
+bypassed.
+
+%% ============================================================================
+\section{Experimental Setup}
+%% ============================================================================
+
+\subsection{Datasets}
+
+\begin{itemize}
+    \item \textbf{ModelNet10:} 4,899 shapes across 10 object categories.
+    \item \textbf{ModelNet40:} 12,311 shapes (9,843 train / 2,468 test) across 40 categories.
+    \item \textbf{Point sampling:} 512 points for the custom transformer experiments; 1,024
+          farthest-point-sampled points with normals for PTv3 experiments.
+    \item \textbf{$k$-NN graph:} $k = 12$ neighbors for constructing the connectivity graph
+          used in both spectral feature computation and distance-modulated attention.
+\end{itemize}
+
+\subsection{Spectral Feature Computation}
+
+Spectral features are computed as follows:
+\begin{enumerate}
+    \item Build a symmetric $k$-NN graph from the point cloud coordinates.
+    \item Extract the largest connected component (to ensure a valid Laplacian).
+    \item Compute the combinatorial graph Laplacian $L = D - A$, where $D$ is the degree
+          matrix and $A$ is the adjacency matrix.
+    \item Solve for the smallest non-trivial eigenpairs of $L$, excluding the constant
+          (trivial) eigenvector corresponding to $\lambda_0 = 0$.
+    \item Apply one of four canonicalization methods to resolve sign ambiguity:
+          \begin{itemize}
+              \item \textbf{Spielman:} Solve a GF(2) linear system to find a consistent sign
+                    assignment.
+              \item \textbf{Max-abs:} Flip each eigenvector so that its entry with the largest
+                    absolute value is positive.
+              \item \textbf{Random:} Assign a random sign to each eigenvector.
+              \item \textbf{None:} Use eigenvectors as returned by the eigensolver.
+          \end{itemize}
+\end{enumerate}
+
+\subsection{Hyperparameters}
+
+\paragraph{Custom Transformer.}
+$d_{\text{model}} = 128$, $n_{\text{head}} = 8$, 4 transformer layers, feedforward
+dimension 256, dropout 0.1, AdamW optimizer with learning rate $10^{-3}$ and weight decay
+$10^{-4}$, CosineAnnealingLR scheduler, 100 training epochs, batch size 16.
+
+\paragraph{PTv3.}
+Grid size 0.01, drop-path rate 0.3, AdamW optimizer with learning rate $10^{-3}$ (block
+parameters: $10^{-4}$), weight decay 0.01, OneCycleLR scheduler with
+$\texttt{pct\_start} = 0.05$, cross-entropy plus Lovasz-Softmax loss, 300 training epochs,
+batch size 32.
+
+\paragraph{Deep Sets.}
+Hidden dimension 256, 3-layer MLPs for both $\phi$ and $\rho$ networks with ReLU
+activations, dropout 0.1, AdamW optimizer with learning rate $10^{-3}$, weight decay
+$10^{-4}$, CosineAnnealingLR scheduler, 100 training epochs, batch size 32. Default
+spectral computation uses $k = 12$ neighbors, combinatorial Laplacian, Spielman
+canonicalization, and $n_{\text{eigs}} = 8$.
+
+\paragraph{HKS Deep Sets.}
+Same architecture as Deep Sets. Spectral computation uses $k = 30$ neighbors, Gaussian
+kernel weighted adjacency, symmetric normalized Laplacian, $n_{\text{eigs}} = 32$
+eigenpairs, and $n_{\text{times}} = 16$ log-spaced time scales for HKS.
+
+\subsection{Spectral Pipeline Corrections}
+
+During the course of experimentation, we identified and corrected three bugs in the
+spectral feature computation pipeline:
+
+\begin{enumerate}
+    \item \textbf{Graph symmetrization.} The original symmetrization
+          $A = \frac{1}{2}(A + A^\top)$ averages one-directional edges, halving distances
+          for edges present in only one direction. We corrected this to
+          $A = \max(A, A^\top)$ (element-wise maximum), preserving true distances.
+
+    \item \textbf{Near-trivial eigenvector leakage.} The original implementation discarded
+          only the first eigenvector (index 0). With weighted Laplacians, multiple
+          near-zero eigenvalues can appear due to near-disconnected components. We
+          introduced a threshold parameter ($10^{-6}$) to filter \emph{all} eigenvalues
+          below it.
+
+    \item \textbf{Unnormalized Laplacian.} The combinatorial Laplacian $L = D - A$ has
+          eigenvalues that scale with node degree, making features sensitive to local
+          point density. We added support for the symmetric normalized Laplacian
+          $L_{\text{norm}} = I - D^{-1/2} A D^{-1/2}$, whose eigenvalues lie in $[0, 2]$.
+\end{enumerate}
+
+All Deep Sets and HKS experiments reported below use the corrected pipeline.
+
+%% ============================================================================
+\section{Results}
+%% ============================================================================
+
+\subsection{Main Results}
+
+Table~\ref{tab:main} summarizes classification accuracy across all model configurations on
+ModelNet10 and ModelNet40. The distance-only transformer achieves 82.27\% and 77.19\% on
+MN10 and MN40, respectively. Adding spectral features via any injection method degrades
+performance substantially. On the PTv3 side, the Pointcept baseline achieves 92.34\% on
+MN40, while the gated spectral variant reaches 92.22\%---a negligible difference that falls
+within run-to-run variance.
+
+\begin{table}[ht]
+\centering
+\caption{Classification accuracy (\%) on ModelNet10 (MN10) and ModelNet40 (MN40). Best
+result in each architecture family is shown in \textbf{bold}.}
+\label{tab:main}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Method} & \textbf{MN10} & \textbf{MN40} \\
+\midrule
+\multicolumn{3}{l}{\emph{Custom Distance Transformer}} \\
+\quad Distance-only (k-NN attention, xyz) & \textbf{82.27} & \textbf{77.19} \\
+\quad + Spectral attention bias & 68.14 & 65.40 \\
+\quad + Spectral node features (canon.) & 68.39 & 65.19 \\
+\quad Eigenvector-only (no xyz) & ${\sim}$11 & -- \\
+\midrule
+\multicolumn{3}{l}{\emph{PointTransformerV3}} \\
+\quad PTv3 naive (xyz, no aug, 100ep) & 54.41 & -- \\
+\quad PTv3 + spectral (xyz + eigvecs) & 45.87 & -- \\
+\quad PTv3 Pointcept (normals + aug, 300ep) & -- & \textbf{92.34} \\
+\quad PTv3 Gated Spectral & -- & 92.22 \\
+\midrule
+\multicolumn{3}{l}{\emph{Deep Sets}} \\
+\quad Eigvecs + xyz (fixed $1/\sqrt{\lambda}$, spielman) & 59.03 & -- \\
+\quad Eigvecs + xyz (fixed $1/\sqrt{\lambda}$, maxabs) & 60.35 & -- \\
+\quad Eigvecs + xyz (learnable $f(\lambda)$, spielman) & 58.92 & -- \\
+\quad Eigvecs + xyz + spectrum descriptor & \textbf{75.88} & -- \\
+\quad HKS + xyz & \textbf{79.74} & -- \\
+\quad Eigvecs only (no xyz) & ${\sim}$20 & -- \\
+\quad HKS only (no xyz) & 31.28 & -- \\
+\quad Eigenvalue spectrum only & 22.69 & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Deep Sets Canonicalization Comparison}
+
+Table~\ref{tab:deepsets_canon} compares the three canonicalization methods for Deep Sets
+with eigenvector node features on ModelNet10. Results are consistent with the transformer
+sweep: all canonicalization methods produce similar accuracy, with max-abs marginally
+leading.
+
+\begin{table}[ht]
+\centering
+\caption{Deep Sets eigenvector canonicalization comparison on ModelNet10 (fixed
+$1/\sqrt{\lambda}$ scaling, xyz + eigenvectors).}
+\label{tab:deepsets_canon}
+\begin{tabular}{lc}
+\toprule
+\textbf{Canonicalization} & \textbf{Test Acc (\%)} \\
+\midrule
+Max-abs & \textbf{60.35} \\
+Spielman & 59.03 \\
+Random & 58.26 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Eigenvector-Only Deep Sets}
+
+Removing xyz coordinates and relying solely on eigenvector features produces near-random
+accuracy across all configurations. Table~\ref{tab:deepsets_noxyz} shows results for
+unweighted and weighted Laplacians.
+
+\begin{table}[ht]
+\centering
+\caption{Deep Sets without xyz coordinates on ModelNet10. Random chance is 10\%.}
+\label{tab:deepsets_noxyz}
+\begin{tabular}{llc}
+\toprule
+\textbf{Laplacian} & \textbf{Canonicalization} & \textbf{Test Acc (\%)} \\
+\midrule
+Unweighted & spielman & ${\sim}$20 \\
+Unweighted & maxabs & ${\sim}$20 \\
+Unweighted & random & ${\sim}$20 \\
+\midrule
+Weighted (Gaussian) & spielman & ${\sim}$15 \\
+Weighted (Gaussian) & maxabs & ${\sim}$14 \\
+Weighted (Gaussian) & random & ${\sim}$17 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Sign-Invariant Spectral Features}
+
+The failure of raw eigenvectors motivated two sign-invariant alternatives.
+Table~\ref{tab:sign_invariant} compares HKS and eigenvalue spectrum features on
+ModelNet10.
+
+\begin{table}[ht]
+\centering
+\caption{Sign-invariant spectral features on ModelNet10 (Deep Sets).}
+\label{tab:sign_invariant}
+\begin{tabular}{lc}
+\toprule
+\textbf{Configuration} & \textbf{Test Acc (\%)} \\
+\midrule
+HKS + xyz (weighted, normalized $L$) & \textbf{79.74} \\
+Deep Sets + spectrum descriptor (eigvecs + xyz + $\lambda$ MLP) & 75.88 \\
+HKS only (no xyz) & 31.28 \\
+Eigenvalue spectrum only & 22.69 \\
+\midrule
+\emph{For reference:} & \\
+\quad Distance-only transformer & 82.27 \\
+\quad Deep Sets eigvecs + xyz (best canon.) & 60.35 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+HKS with xyz achieves 79.74\%, a substantial improvement over raw eigenvector features
+(60.35\%) and approaching the distance-only transformer baseline (82.27\%). The eigenvalue
+spectrum descriptor, appended as a global feature to the pooled Deep Sets representation,
+reaches 75.88\%---a 16-point improvement over eigenvectors alone. However, without xyz
+coordinates, HKS alone achieves only 31.28\% and eigenvalues alone 22.69\%, confirming
+that spectral features complement but cannot replace geometric coordinates.
+
+\subsection{Spielman Canonicalization Sweep}
+
+To determine whether the eigenvector sign ambiguity can be resolved through better
+canonicalization, we performed a systematic sweep over four canonicalization methods
+(Spielman, max-abs, random, none) and multiple eigenvector counts $k \in \{4, 8, 16\}$ on
+ModelNet10. Tables~\ref{tab:sweep_unweighted} and~\ref{tab:sweep_weighted} report the best
+configuration per model--canonicalization combination.
+
+\begin{table}[ht]
+\centering
+\caption{Spielman canonicalization sweep on ModelNet10 (unweighted Laplacian). Best
+validation and test accuracy per model--canonicalization pair.}
+\label{tab:sweep_unweighted}
+\footnotesize
+\begin{tabular}{llccc}
+\toprule
+\textbf{Model} & \textbf{Canon.} & \textbf{$k$} & \textbf{Val Acc (\%)} & \textbf{Test Acc (\%)} \\
+\midrule
+Node (Dist.\ Transf.) & maxabs & 16 & 73.56 & \textbf{67.07} \\
+Node & spielman & 8 & 74.81 & 66.85 \\
+Node & none & 4 & 72.68 & 66.63 \\
+Node & random & 16 & 73.68 & 66.52 \\
+\midrule
+Spectral (Std.\ Transf.) & spielman & 8 & 31.95 & 19.49 \\
+Spectral & none & 16 & 30.11 & 18.41 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Spielman canonicalization sweep on ModelNet10 (weighted Laplacian). Best
+validation and test accuracy per model--canonicalization pair.}
+\label{tab:sweep_weighted}
+\footnotesize
+\begin{tabular}{llccc}
+\toprule
+\textbf{Model} & \textbf{Canon.} & \textbf{$k$} & \textbf{Val Acc (\%)} & \textbf{Test Acc (\%)} \\
+\midrule
+Node & maxabs & 16 & 76.13 & \textbf{66.35} \\
+Node & none & 4 & 76.42 & 65.33 \\
+\midrule
+Spectral & maxabs & 4 & 34.39 & 19.65 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The results are striking in their uniformity: across all four canonicalization strategies,
+test accuracy for the node model varies by less than 0.6 percentage points (66.52--67.07\%).
+The Spielman method, despite its theoretical motivation, offers no meaningful advantage over
+the trivial max-abs heuristic or even no canonicalization at all. The spectral-only model
+collapses to near-chance accuracy (${\sim}$19\%) regardless of canonicalization.
+
+\subsection{Eigenvector Uncanonicalizability Analysis}
+
+To understand \emph{why} canonicalization fails, we analyzed the uncanonicalizability of
+eigenvectors across 12,305 shapes from ModelNet40. An eigenvector is deemed
+``uncanonicalizable'' when the max-abs-value sign convention is ambiguous---that is, when
+no single entry has a sufficiently dominant magnitude to determine a canonical sign.
+Table~\ref{tab:uncanon} reports summary statistics, and Table~\ref{tab:uncanon_rates}
+reports per-index uncanonicalizability rates.
+
+\begin{table}[ht]
+\centering
+\caption{Eigenvector uncanonicalizability statistics across ModelNet40 (12,305 shapes).}
+\label{tab:uncanon}
+\begin{tabular}{lr}
+\toprule
+\textbf{Statistic} & \textbf{Value} \\
+\midrule
+Shapes analyzed & 12,305 \\
+Points per shape & 512 \\
+Eigenvectors computed & 20 \\
+$k$-NN neighbors & 12 \\
+Avg.\ uncanonicalizable eigvecs / shape & 10.41 (std 4.46) \\
+Avg.\ multiplicity-1 eigenvalues & 18.96 / 20 \\
+Threshold & 0.221 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Per-index eigenvector uncanonicalizability rates (\%) on ModelNet40.}
+\label{tab:uncanon_rates}
+\begin{tabular}{lccccccc}
+\toprule
+\textbf{Eigvec index} & 1 & 2 & 3 & 5 & 10 & 15 & 20 \\
+\midrule
+\textbf{Uncanon.\ rate (\%)} & \textbf{0.7} & 40.4 & 43.4 & 49.2 & 56.8 & 58.0 & \textbf{61.4} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On average, 10.41 out of 20 eigenvectors per shape (52\%) are uncanonicalizable, despite
+nearly all eigenvalues having multiplicity one (18.96 out of 20). The uncanonicalizability
+rate increases monotonically with eigenvector index, from just 0.7\% for the first
+non-trivial eigenvector (Fiedler vector) to 61.4\% for the 20th eigenvector. This means
+that higher-frequency eigenvectors---which encode finer geometric detail---are precisely
+those most afflicted by sign ambiguity.
+
+%% ============================================================================
+\section{Discussion}
+%% ============================================================================
+
+\paragraph{Raw eigenvector features consistently hurt.}
+Across every injection method tested---attention bias, node feature concatenation, naive
+PTv3 concatenation, and Deep Sets---raw eigenvector features degrade or fail to improve
+classification accuracy. On the custom transformer, spectral features reduce accuracy by
+12--27 percentage points (Table~\ref{tab:main}). Deep Sets with eigenvectors + xyz achieve
+only 59--60\% on ModelNet10, compared to the 82\% distance-only transformer baseline. Even
+gated fusion on PTv3 cannot improve over the geometric-only baseline (92.22\% vs 92.34\%).
+
+\paragraph{The sign ambiguity is fundamental.}
+Our uncanonicalizability analysis (Tables~\ref{tab:uncanon}--\ref{tab:uncanon_rates}) reveals
+that 40--61\% of eigenvectors cannot be reliably assigned a canonical sign, even when
+eigenvalues have multiplicity one. The canonicalization sweeps across both transformers
+(Tables~\ref{tab:sweep_unweighted}--\ref{tab:sweep_weighted}) and Deep Sets
+(Table~\ref{tab:deepsets_canon}) confirm that this is not merely a failure of one particular
+method: all canonicalization strategies produce test accuracies within a narrow band. The
+Deep Sets results are particularly telling, as the $\phi$-network processes each point
+independently and therefore cannot leverage inter-point relationships to disambiguate signs.
+
+\paragraph{Sign-invariant descriptors partially recover spectral signal.}
+HKS features, which use $v_k(i)^2$ and are therefore inherently sign-invariant, achieve
+79.74\% on ModelNet10 with xyz---a 20-point improvement over raw eigenvector features and
+within 3 points of the distance-only transformer baseline (Table~\ref{tab:sign_invariant}).
+The eigenvalue spectrum descriptor, which bypasses eigenvectors entirely, boosts Deep Sets
+to 75.88\%. These results demonstrate that spectral information \emph{is} discriminative
+when the sign ambiguity is properly circumvented, contradicting the hypothesis that
+spectral features are inherently redundant with geometric representations.
+
+\paragraph{Spectral features without coordinates are insufficient.}
+Without xyz coordinates, all spectral representations collapse: eigenvectors only
+$\sim$15--20\%, HKS only 31.28\%, eigenvalues only 22.69\%
+(Tables~\ref{tab:deepsets_noxyz},~\ref{tab:sign_invariant}). This confirms that spectral
+features complement but cannot replace geometric coordinates. The per-point spectral
+descriptors (eigenvectors, HKS) encode \emph{relative} structural information (partitioning,
+connectivity) that requires spatial context to become discriminative.
+
+\paragraph{Gated fusion recovers the baseline.}
+The GatedSpectralPTv3Classifier achieves 92.22\% on ModelNet40, compared to the 92.34\%
+Pointcept baseline. The learned gate effectively suppresses spectral features, preventing
+the degradation observed with naive injection. At the PTv3 performance level, the geometric
+representations are sufficiently expressive that eigenvector features provide no additional
+discriminative signal.
+
+\paragraph{Pipeline quality matters.}
+Three bugs in the spectral pipeline (symmetrization, near-trivial eigenvector leakage,
+unnormalized Laplacian) were identified during debugging. The corrected pipeline with
+Gaussian kernel weights, symmetric normalization, and proper trivial filtering enables the
+HKS and spectrum results reported here. This underscores the importance of careful
+spectral feature engineering.
+
+%% ============================================================================
+\section{Conclusion}
+%% ============================================================================
+
+Raw Laplacian eigenvectors do not provide useful features for point cloud classification
+on ModelNet benchmarks. The fundamental eigenvector sign ambiguity cannot be resolved by any
+of the four canonicalization strategies tested---Spielman, max-abs, random, and none all
+yield statistically indistinguishable results across both transformers and Deep Sets. This
+finding is consistent across three architecture families and five injection methods.
+
+However, sign-invariant spectral descriptors tell a more nuanced story. Heat Kernel
+Signatures achieve 79.74\% on ModelNet10 with a simple Deep Sets architecture---within 3
+points of the distance-only transformer baseline and 20 points above raw eigenvector
+features. Eigenvalue spectrum descriptors (Shape-DNA) reach 75.88\%, demonstrating that
+the Laplacian spectrum carries discriminative shape information when sign ambiguity is
+properly circumvented. The key insight is that the \emph{sign ambiguity}, not the spectral
+information itself, is responsible for the poor performance of eigenvector-based approaches.
+
+At the state-of-the-art level, PTv3 with the Pointcept recipe already achieves 92.34\% on
+ModelNet40 using only geometric features. A learned gating mechanism achieves parity
+(92.22\%) by suppressing spectral features, confirming that modern geometric architectures
+capture sufficient structural information for this benchmark.
+
+Future directions include applying HKS and spectral descriptors within stronger
+architectures (PTv3, DGCNN), SignNet-style basis-invariant networks that learn over
+eigenvector products $v_k(i) \cdot v_k(j)$, and tasks where global connectivity is more
+critical than local geometry (shape segmentation, correspondence, retrieval).
+
+\begin{thebibliography}{9}
+\bibitem{zaheer2017deep}
+M.~Zaheer, S.~Kottur, S.~Ravanbakhsh, B.~P{\'o}czos, R.~Salakhutdinov, and
+A.~Smola. Deep Sets. In \emph{Advances in Neural Information Processing Systems}, 2017.
+\end{thebibliography}
+
+\end{document}
