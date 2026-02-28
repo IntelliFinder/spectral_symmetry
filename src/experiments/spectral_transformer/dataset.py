@@ -18,10 +18,7 @@ from src.spectral_core import (
 def canonicalize_eigenvectors(eigenvectors):
     """Canonicalize eigenvector signs using the max-absolute-value entry.
 
-    For each eigenvector column, find the entry with the largest absolute
-    value. If that entry is unique (no other entry has the same absolute
-    value), flip the eigenvector so that entry is positive. If the max
-    absolute value is not unique, leave the eigenvector unchanged.
+    Thin wrapper around ``src.spectral_canonicalization.canonicalize_maxabs``.
 
     Parameters
     ----------
@@ -31,20 +28,9 @@ def canonicalize_eigenvectors(eigenvectors):
     -------
     eigenvectors : ndarray of shape (N, k), sign-canonicalized copy.
     """
-    eigenvectors = eigenvectors.copy()
-    for j in range(eigenvectors.shape[1]):
-        col = eigenvectors[:, j]
-        abs_col = np.abs(col)
-        max_abs = abs_col.max()
-        # Count how many entries achieve the max absolute value
-        mask = np.isclose(abs_col, max_abs, rtol=1e-8, atol=1e-12)
-        if mask.sum() == 1:
-            # Unique max-abs entry: flip so it's positive
-            idx = np.argmax(abs_col)
-            if col[idx] < 0:
-                eigenvectors[:, j] = -col
-        # else: max abs value is not unique, keep as is
-    return eigenvectors
+    from src.spectral_canonicalization import canonicalize_maxabs
+
+    return canonicalize_maxabs(eigenvectors)
 
 
 class SpectralModelNet(Dataset):
@@ -212,10 +198,10 @@ class TruncatedSpectralDataset(Dataset):
         features, mask, label = self.base_dataset[idx]
         if self.use_xyz:
             # xyz (cols 0-2) + first k eigenvectors (cols 3 to 3+k)
-            features = torch.cat([features[:, :3], features[:, 3:3 + self.k]], dim=1)
+            features = torch.cat([features[:, :3], features[:, 3 : 3 + self.k]], dim=1)
         else:
             # only eigenvector columns
-            features = features[:, 3:3 + self.k]
+            features = features[:, 3 : 3 + self.k]
         return features, mask, label
 
 
@@ -421,11 +407,17 @@ class SpectralNodeModelNet(Dataset):
 
         if variant == 10:
             base_dataset = ModelNet10Dataset(
-                root_dir, split=split, max_points=n_points * 2, download=download,
+                root_dir,
+                split=split,
+                max_points=n_points * 2,
+                download=download,
             )
         elif variant == 40:
             base_dataset = ModelNet40Dataset(
-                root_dir, split=split, max_points=n_points * 2, download=download,
+                root_dir,
+                split=split,
+                max_points=n_points * 2,
+                download=download,
             )
         else:
             raise ValueError(f"variant must be 10 or 40, got {variant}")
@@ -467,7 +459,7 @@ class SpectralNodeModelNet(Dataset):
             feat_dim = 3 + n_eigs
             features = np.zeros((n_points, feat_dim), dtype=np.float32)
             features[:n_actual, :3] = pts_cc.astype(np.float32)
-            features[:n_actual, 3:3 + n_eigs_actual] = eigenvectors.astype(np.float32)
+            features[:n_actual, 3 : 3 + n_eigs_actual] = eigenvectors.astype(np.float32)
 
             # k-NN distance matrix on connected-component points
             k = min(n_neighbors, n_actual - 1)
@@ -546,11 +538,17 @@ class SpectralDistanceModelNet(Dataset):
 
         if variant == 10:
             base_dataset = ModelNet10Dataset(
-                root_dir, split=split, max_points=n_points * 2, download=download,
+                root_dir,
+                split=split,
+                max_points=n_points * 2,
+                download=download,
             )
         elif variant == 40:
             base_dataset = ModelNet40Dataset(
-                root_dir, split=split, max_points=n_points * 2, download=download,
+                root_dir,
+                split=split,
+                max_points=n_points * 2,
+                download=download,
             )
         else:
             raise ValueError(f"variant must be 10 or 40, got {variant}")
@@ -611,16 +609,18 @@ class SpectralDistanceModelNet(Dataset):
             mask[:n_actual] = False
 
             label = self.class_to_idx[class_name]
-            self.data.append({
-                "features": features,
-                "dist_matrix": dist_matrix,
-                "eigenvectors": eigenvectors.astype(np.float32),
-                "eigenvalues": eigenvalues[:n_eigs_actual].astype(np.float32),
-                "group_indices": group_indices,
-                "n_actual": n_actual,
-                "mask": mask,
-                "label": label,
-            })
+            self.data.append(
+                {
+                    "features": features,
+                    "dist_matrix": dist_matrix,
+                    "eigenvectors": eigenvectors.astype(np.float32),
+                    "eigenvalues": eigenvalues[:n_eigs_actual].astype(np.float32),
+                    "group_indices": group_indices,
+                    "n_actual": n_actual,
+                    "mask": mask,
+                    "label": label,
+                }
+            )
 
         if n_skipped > 0:
             print(f"Warning: skipped {n_skipped} shapes due to eigensolver failures")
@@ -637,9 +637,7 @@ class SpectralDistanceModelNet(Dataset):
         n_eigs_actual = eigvecs.shape[1]
 
         # Compute spectral distance channels on-the-fly
-        spectral_dists = np.zeros(
-            (self.n_points, self.n_points, self.n_eigs), dtype=np.float32
-        )
+        spectral_dists = np.zeros((self.n_points, self.n_points, self.n_eigs), dtype=np.float32)
         unique_groups = sorted(set(group_indices[:n_eigs_actual]))
         for ch_idx, g in enumerate(unique_groups):
             members = [k for k in range(n_eigs_actual) if group_indices[k] == g]

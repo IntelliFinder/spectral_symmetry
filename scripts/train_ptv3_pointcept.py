@@ -1,18 +1,25 @@
 #!/usr/bin/env python
-"""Train PTv3 with gated spectral fusion on ModelNet40.
+"""Train PTv3 on ModelNet40 matching the Pointcept recipe.
 
-Same recipe as train_ptv3_pointcept.py but uses GatedSpectralPTv3Classifier
-which learns per-channel gates between geometric and spectral features.
+Key settings from Pointcept config cls-ptv3-v1m1-0-base.py:
+- Data: modelnet40_normal_resampled (xyz + normals, 6 channels)
+- 8192 points, grid_size=0.01
+- Augmentations: NormalizeCoord, RandomScale(0.7-1.5), RandomShift(±0.2 XY), GridSample, Shuffle
+- Model: PTv3 enc_depths=(2,2,2,6,2), patch_size=1024, 4 serialization orders
+- 3-layer cls head: 512->256->128->40
+- Optimizer: AdamW, lr=1e-3 (block params 1e-4), weight_decay=0.01
+- Scheduler: OneCycleLR, pct_start=0.05, cosine anneal
+- Loss: CrossEntropy + LovaszLoss (equal weight)
+- 300 epochs, batch_size=32
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.nn.functional import softmax
+import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
@@ -25,15 +32,10 @@ from src.experiments.ptv3.augmentations import (
     RandomShift,
     ShufflePoint,
 )
-from src.experiments.ptv3.dataset_spectral_pointcept import (
-    ModelNet40SpectralNormals,
-    spectral_pointcept_collate_fn,
-)
-from src.experiments.ptv3.gated_classifier import GatedSpectralPTv3Classifier
+from src.experiments.ptv3.classifier import PTv3PointceptClassifier
+from src.experiments.ptv3.dataset_pointcept import ModelNet40WithNormals, pointcept_collate_fn
 from src.experiments.ptv3.lovasz_loss import LovaszLoss
 from src.training import make_train_val_split  # noqa: E402
-
-GRID_SAMPLE_KEYS = ("coord", "normal", "feat", "eigvec")
 
 
 def build_train_transform(grid_size=0.01):
@@ -42,7 +44,7 @@ def build_train_transform(grid_size=0.01):
             NormalizeCoord(),
             RandomScale(scale=(0.7, 1.5), anisotropic=True),
             RandomShift(shift=[(-0.2, 0.2), (-0.2, 0.2), (0, 0)]),
-            GridSample(grid_size=grid_size, mode="train", keys=GRID_SAMPLE_KEYS),
+            GridSample(grid_size=grid_size, mode="train", keys=("coord", "normal", "feat")),
             ShufflePoint(),
         ]
     )
@@ -52,7 +54,7 @@ def build_test_transform(grid_size=0.01):
     return Compose(
         [
             NormalizeCoord(),
-            GridSample(grid_size=grid_size, mode="test", keys=GRID_SAMPLE_KEYS),
+            GridSample(grid_size=grid_size, mode="test", keys=("coord", "normal", "feat")),
         ]
     )
 
@@ -96,22 +98,26 @@ def evaluate(model, loader, device):
 
 @torch.no_grad()
 def evaluate_with_voting(
-    model,
-    test_dataset,
-    device,
-    num_augments=10,
-    grid_size=0.01,
+    model, test_dataset, device, num_augments=10, grid_size=0.01, batch_size=16
 ):
-    """Test-time voting: augment each sample, sum softmax scores, take argmax."""
+    """Test-time voting: augment each sample, sum softmax scores, take argmax.
+
+    Parameters
+    ----------
+    num_augments : int
+        Number of augmented views per sample.
+    """
     model.eval()
+    n_classes = None
     correct = 0
     total = len(test_dataset)
 
+    # Build voting augmentation: random scale in [0.8, 1.2]
     voting_transform = Compose(
         [
             NormalizeCoord(),
             RandomScale(scale=(0.8, 1.2), anisotropic=True),
-            GridSample(grid_size=grid_size, mode="test", keys=GRID_SAMPLE_KEYS),
+            GridSample(grid_size=grid_size, mode="test", keys=("coord", "normal", "feat")),
         ]
     )
 
@@ -121,31 +127,34 @@ def evaluate_with_voting(
         scores_sum = None
 
         for _ in range(num_augments):
+            # Make a fresh copy each time
             data = {
-                "coord": raw_data["coord"].copy(),
-                "normal": raw_data["normal"].copy(),
-                "eigvec": raw_data["eigvec"].copy(),
+                "coord": raw_data["coord"].copy()
+                if isinstance(raw_data["coord"], np.ndarray)
+                else raw_data["coord"].numpy().copy(),
+                "normal": raw_data["normal"].copy()
+                if isinstance(raw_data["normal"], np.ndarray)
+                else raw_data["normal"].numpy().copy(),
                 "label": label,
             }
             data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
             data = voting_transform(data)
 
-            coord = torch.from_numpy(data["coord"]).float().to(device)
-            feat = torch.from_numpy(data["feat"]).float().to(device)
-            eigvec = torch.from_numpy(data["eigvec"]).float().to(device)
-            n = coord.shape[0]
+            # Single-sample batch
+            coord = torch.from_numpy(data["coord"]).float().unsqueeze(0).to(device)
+            feat = torch.from_numpy(data["feat"]).float().unsqueeze(0).to(device)
+            n = coord.shape[1]
 
             data_dict = {
-                "coord": coord,
-                "feat": feat,
-                "eigvec": eigvec,
+                "coord": coord.squeeze(0),
+                "feat": feat.squeeze(0),
                 "offset": torch.tensor([n], dtype=torch.long).to(device),
             }
             if "grid_coord" in data:
                 data_dict["grid_coord"] = torch.from_numpy(data["grid_coord"]).int().to(device)
 
             logits = model(data_dict)
-            probs = softmax(logits, dim=1)
+            probs = F.softmax(logits, dim=1)  # (1, C)
             if scores_sum is None:
                 scores_sum = probs
             else:
@@ -162,9 +171,7 @@ def evaluate_with_voting(
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Train PTv3 with gated spectral fusion on ModelNet40"
-    )
+    parser = argparse.ArgumentParser(description="Train PTv3 on ModelNet40 (Pointcept recipe)")
     parser.add_argument("--data-dir", type=str, default="data/modelnet")
     parser.add_argument("--grid-size", type=float, default=0.01)
     parser.add_argument("--epochs", type=int, default=300)
@@ -178,7 +185,7 @@ def main(argv=None):
     parser.add_argument("--ce-weight", type=float, default=1.0)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--save-dir", type=str, default="results/ptv3_gated_spectral")
+    parser.add_argument("--save-dir", type=str, default="results/ptv3_pointcept_mn40")
     parser.add_argument("--voting", action="store_true", help="Run voting eval at end")
     parser.add_argument("--num-augments", type=int, default=10)
     parser.add_argument(
@@ -187,16 +194,6 @@ def main(argv=None):
         default=1,
         help="Gradient accumulation steps (effective batch = batch_size * grad_accum)",
     )
-    # Spectral args
-    parser.add_argument("--n-eigs", type=int, default=8)
-    parser.add_argument(
-        "--canonicalization",
-        type=str,
-        default="spielman",
-        choices=("spielman", "maxabs", "random", "none"),
-    )
-    parser.add_argument("--weighted", action="store_true")
-    parser.add_argument("--n-neighbors", type=int, default=12)
     args = parser.parse_args(argv)
 
     if args.device == "auto":
@@ -211,25 +208,17 @@ def main(argv=None):
 
     # Datasets
     print("Loading training set...")
-    full_train_ds = ModelNet40SpectralNormals(
+    full_train_ds = ModelNet40WithNormals(
         args.data_dir,
         split="train",
         transform=train_transform,
-        n_eigs=args.n_eigs,
-        n_neighbors=args.n_neighbors,
-        canonicalization=args.canonicalization,
-        weighted=args.weighted,
     )
     train_ds, val_ds = make_train_val_split(full_train_ds, val_fraction=0.2, seed=42)
     print("Loading test set...")
-    test_ds = ModelNet40SpectralNormals(
+    test_ds = ModelNet40WithNormals(
         args.data_dir,
         split="test",
         transform=test_transform,
-        n_eigs=args.n_eigs,
-        n_neighbors=args.n_neighbors,
-        canonicalization=args.canonicalization,
-        weighted=args.weighted,
     )
     print(
         f"Train: {len(train_ds)}, Val: {len(val_ds)}, "
@@ -241,7 +230,7 @@ def main(argv=None):
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        collate_fn=spectral_pointcept_collate_fn,
+        collate_fn=pointcept_collate_fn,
         drop_last=True,
         pin_memory=True,
     )
@@ -250,7 +239,7 @@ def main(argv=None):
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        collate_fn=spectral_pointcept_collate_fn,
+        collate_fn=pointcept_collate_fn,
         pin_memory=True,
     )
     test_loader = DataLoader(
@@ -258,14 +247,13 @@ def main(argv=None):
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        collate_fn=spectral_pointcept_collate_fn,
+        collate_fn=pointcept_collate_fn,
         pin_memory=True,
     )
 
     # Model
     n_classes = len(full_train_ds.classes)
-    model = GatedSpectralPTv3Classifier(
-        n_eigs=args.n_eigs,
+    model = PTv3PointceptClassifier(
         in_channels=6,
         n_classes=n_classes,
         grid_size=args.grid_size,
@@ -277,10 +265,7 @@ def main(argv=None):
 
     # Optimizer with two param groups
     optimizer = build_optimizer(
-        model,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        block_lr_mult=args.block_lr_mult,
+        model, lr=args.lr, weight_decay=args.weight_decay, block_lr_mult=args.block_lr_mult
     )
 
     # Scheduler: OneCycleLR stepped per iteration
@@ -350,33 +335,15 @@ def main(argv=None):
     print(f"Final test accuracy (no voting): {test_acc:.4f}")
     print(f"Model saved to {save_dir / 'best_model.pt'}")
 
-    # Save results
-    results = {
-        "best_val_acc": best_val_acc,
-        "test_acc": test_acc,
-        "epochs": args.epochs,
-        "n_eigs": args.n_eigs,
-        "canonicalization": args.canonicalization,
-        "weighted": args.weighted,
-        "n_neighbors": args.n_neighbors,
-        "grid_size": args.grid_size,
-        "batch_size": args.batch_size,
-        "lr": args.lr,
-        "drop_path": args.drop_path,
-    }
-
     # Optional voting evaluation
     if args.voting:
         print(f"\nRunning voting evaluation ({args.num_augments} augments)...")
         model.load_state_dict(torch.load(save_dir / "best_model.pt", weights_only=True))
-        test_ds_raw = ModelNet40SpectralNormals(
+        # Use the raw test dataset (no transform) for voting
+        test_ds_raw = ModelNet40WithNormals(
             args.data_dir,
             split="test",
             transform=None,
-            n_eigs=args.n_eigs,
-            n_neighbors=args.n_neighbors,
-            canonicalization=args.canonicalization,
-            weighted=args.weighted,
         )
         voting_acc = evaluate_with_voting(
             model,
@@ -386,11 +353,6 @@ def main(argv=None):
             grid_size=args.grid_size,
         )
         print(f"Voting test accuracy: {voting_acc:.4f}")
-        results["voting_acc"] = voting_acc
-
-    with open(save_dir / "results.json", "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"Results saved to {save_dir / 'results.json'}")
 
 
 if __name__ == "__main__":

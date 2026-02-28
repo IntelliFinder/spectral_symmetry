@@ -506,3 +506,451 @@ def spectral_canonicalize(eigenvectors, eigenvalues, precision=8):
         result[:, col] = eigenvectors[:, col] * signs[idx]
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# MAP: Maximal Axis Projection (Ma et al., NeurIPS 2023)
+# ---------------------------------------------------------------------------
+
+
+def spectral_canonicalize_map(eigenvectors, eigenvalues, rtol=1e-3):
+    """Canonicalize eigenvectors via Maximal Axis Projection (MAP).
+
+    For each eigenspace (group of eigenvectors sharing an eigenvalue):
+    - **Multiplicity 1**: flip sign so the entry with largest absolute value
+      is positive (with deterministic tie-breaking by smallest index).
+    - **Multiplicity m > 1**: greedily select m coordinate axes that have
+      maximal projection onto the eigenspace, then build a canonical basis
+      by projecting those axes into the eigenspace and orthonormalizing.
+
+    Reference: Ma et al., "Laplacian Canonization: A Minimalist Approach to
+    Sign and Basis Invariance", NeurIPS 2023.
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (n, k)
+    eigenvalues : ndarray of shape (k,)
+    rtol : float
+        Relative tolerance for eigenvalue grouping.
+
+    Returns
+    -------
+    canonicalized : ndarray of shape (n, k)
+    """
+    eigenvectors = np.asarray(eigenvectors, dtype=float)
+    eigenvalues = np.asarray(eigenvalues, dtype=float)
+
+    if eigenvectors.size == 0:
+        return eigenvectors.copy()
+
+    n, k = eigenvectors.shape
+    result = eigenvectors.copy()
+
+    mult_info = detect_eigenvalue_multiplicities(eigenvalues, rtol=rtol)
+    group_indices = mult_info["group_indices"]
+
+    # Process each eigenspace group
+    groups = {}
+    for j in range(k):
+        g = group_indices[j]
+        if g not in groups:
+            groups[g] = []
+        groups[g].append(j)
+
+    for cols in groups.values():
+        m = len(cols)
+        U = eigenvectors[:, cols].copy()  # (n, m)
+
+        if m == 1:
+            # Multiplicity 1: maxabs sign flip
+            v = U[:, 0]
+            abs_v = np.abs(v)
+            i_max = int(np.argmax(abs_v))
+            if v[i_max] < 0:
+                result[:, cols[0]] = -v
+            else:
+                result[:, cols[0]] = v
+        else:
+            # Multiplicity > 1: axis projection canonicalization
+            result[:, cols] = _map_canonicalize_eigenspace(U)
+
+    return result
+
+
+def _map_canonicalize_eigenspace(U):
+    """Canonicalize a degenerate eigenspace via maximal axis projection.
+
+    Given U (n x m) whose columns span an eigenspace of multiplicity m,
+    greedily selects m coordinate axes e_{i_1}, ..., e_{i_m} that have
+    maximal projection onto the eigenspace, then builds a canonical ONB by
+    projecting each axis into the remaining subspace and orthonormalizing.
+
+    All operations use an ONB Q_U for the eigenspace, ensuring canonical
+    vectors stay exactly within span(U).
+
+    Parameters
+    ----------
+    U : ndarray of shape (n, m)
+
+    Returns
+    -------
+    V_canon : ndarray of shape (n, m), canonical orthonormal basis.
+    """
+    n, m = U.shape
+
+    # ONB for the eigenspace — all projections go through this
+    Q_U, _ = np.linalg.qr(U, mode="reduced")  # (n, m)
+
+    # We'll work in the m-dimensional coefficient space
+    # A row of Q_U gives the coefficients of e_i projected into the eigenspace
+    # ||proj_{eigenspace}(e_i)||^2 = sum_j Q_U[i,j]^2
+
+    result = np.zeros((n, m))
+    used_dirs = np.zeros((m, 0))  # directions already used (in coeff space)
+
+    for col_idx in range(m):
+        # Compute projection norms onto the remaining subspace
+        if used_dirs.shape[1] > 0:
+            # Remove used direction components from each row's coefficient vector
+            Q_U_coeffs = Q_U.copy()
+            for j in range(used_dirs.shape[1]):
+                d = used_dirs[:, j]
+                # For each row i: remove component along d
+                dots = Q_U_coeffs @ d  # (n,)
+                Q_U_coeffs -= np.outer(dots, d)
+            proj_norms_sq = np.sum(Q_U_coeffs**2, axis=1)
+        else:
+            proj_norms_sq = np.sum(Q_U**2, axis=1)
+
+        # Select axis with maximal remaining projection
+        i_star = int(np.argmax(proj_norms_sq))
+
+        # Get the coefficient vector for this axis in the eigenspace
+        coeff = Q_U[i_star, :].copy()  # (m,)
+
+        # Remove components along already-used directions (Gram-Schmidt in coeff space)
+        for j in range(used_dirs.shape[1]):
+            d = used_dirs[:, j]
+            coeff -= np.dot(coeff, d) * d
+
+        norm = np.linalg.norm(coeff)
+        if norm < 1e-12:
+            # Degenerate — shouldn't happen for correct eigenspace dimension
+            break
+        coeff /= norm
+
+        # Convert back to n-dimensional space: v = Q_U @ coeff
+        v = Q_U @ coeff
+
+        # Sign convention: largest absolute entry positive
+        i_max = int(np.argmax(np.abs(v)))
+        if v[i_max] < 0:
+            coeff = -coeff
+            v = -v
+
+        result[:, col_idx] = v
+        if used_dirs.shape[1] > 0:
+            used_dirs = np.column_stack([used_dirs, coeff])
+        else:
+            used_dirs = coeff.reshape(-1, 1)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# OAP: Orthogonalized Axis Projection (Ma et al., NeurIPS 2024)
+# ---------------------------------------------------------------------------
+
+
+def spectral_canonicalize_oap(eigenvectors, eigenvalues, rtol=1e-3):
+    """Canonicalize eigenvectors via Orthogonalized Axis Projection (OAP).
+
+    Improvement over MAP: after selecting axes and projecting into the
+    eigenspace, applies Gram-Schmidt orthogonalization for a cleaner
+    orthonormal basis. Also uses a more robust axis selection criterion.
+
+    Reference: Ma et al., NeurIPS 2024.
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (n, k)
+    eigenvalues : ndarray of shape (k,)
+    rtol : float
+        Relative tolerance for eigenvalue grouping.
+
+    Returns
+    -------
+    canonicalized : ndarray of shape (n, k)
+    """
+    eigenvectors = np.asarray(eigenvectors, dtype=float)
+    eigenvalues = np.asarray(eigenvalues, dtype=float)
+
+    if eigenvectors.size == 0:
+        return eigenvectors.copy()
+
+    n, k = eigenvectors.shape
+    result = eigenvectors.copy()
+
+    mult_info = detect_eigenvalue_multiplicities(eigenvalues, rtol=rtol)
+    group_indices = mult_info["group_indices"]
+
+    # Process each eigenspace group
+    groups = {}
+    for j in range(k):
+        g = group_indices[j]
+        if g not in groups:
+            groups[g] = []
+        groups[g].append(j)
+
+    for cols in groups.values():
+        m = len(cols)
+        U = eigenvectors[:, cols].copy()  # (n, m)
+
+        if m == 1:
+            # Multiplicity 1: maxabs sign flip (same as MAP)
+            v = U[:, 0]
+            abs_v = np.abs(v)
+            i_max = int(np.argmax(abs_v))
+            if v[i_max] < 0:
+                result[:, cols[0]] = -v
+            else:
+                result[:, cols[0]] = v
+        else:
+            # Multiplicity > 1: OAP with Gram-Schmidt
+            result[:, cols] = _oap_canonicalize_eigenspace(U)
+
+    return result
+
+
+def _oap_canonicalize_eigenspace(U):
+    """Canonicalize a degenerate eigenspace via orthogonalized axis projection.
+
+    Like MAP, selects m coordinate axes greedily by maximal projection onto
+    the remaining eigenspace. Then performs Gram-Schmidt orthogonalization
+    on the raw projections (in coefficient space) for improved numerical
+    stability. All operations are done in the eigenspace coefficient space
+    to guarantee the result spans exactly span(U).
+
+    Parameters
+    ----------
+    U : ndarray of shape (n, m)
+
+    Returns
+    -------
+    V_canon : ndarray of shape (n, m), canonical orthonormal basis.
+    """
+    n, m = U.shape
+
+    # ONB for the eigenspace
+    Q_U, _ = np.linalg.qr(U, mode="reduced")  # (n, m)
+
+    # Step 1: Select m axes greedily and collect raw coefficient vectors
+    raw_coeffs = []  # raw Q_U[i_star, :] before orthogonalization
+    used_coeff_dirs = np.zeros((m, 0))
+
+    for _ in range(m):
+        # Compute remaining projection norms
+        if used_coeff_dirs.shape[1] > 0:
+            Q_U_rem = Q_U.copy()
+            for j in range(used_coeff_dirs.shape[1]):
+                d = used_coeff_dirs[:, j]
+                dots = Q_U_rem @ d
+                Q_U_rem -= np.outer(dots, d)
+            proj_norms_sq = np.sum(Q_U_rem**2, axis=1)
+        else:
+            proj_norms_sq = np.sum(Q_U**2, axis=1)
+
+        i_star = int(np.argmax(proj_norms_sq))
+
+        # Raw projection coefficient: Q_U[i_star, :]
+        coeff = Q_U[i_star, :].copy()
+        raw_coeffs.append(coeff)
+
+        # Track which direction we used (normalized, for next iteration)
+        c_orth = coeff.copy()
+        for j in range(used_coeff_dirs.shape[1]):
+            d = used_coeff_dirs[:, j]
+            c_orth -= np.dot(c_orth, d) * d
+        norm_c = np.linalg.norm(c_orth)
+        if norm_c > 1e-12:
+            c_orth /= norm_c
+            used_coeff_dirs = (
+                np.column_stack([used_coeff_dirs, c_orth])
+                if used_coeff_dirs.shape[1] > 0
+                else c_orth.reshape(-1, 1)
+            )
+
+    # Step 2: Gram-Schmidt on raw coefficients
+    result = np.zeros((n, m))
+    orth_coeffs = np.zeros((m, 0))
+
+    for j, raw_c in enumerate(raw_coeffs):
+        c = raw_c.copy()
+        # Subtract components along already-built directions
+        for i in range(orth_coeffs.shape[1]):
+            d = orth_coeffs[:, i]
+            c -= np.dot(c, d) * d
+        norm_c = np.linalg.norm(c)
+        if norm_c < 1e-12:
+            # Fallback: find unused direction in eigenspace
+            for k in range(m):
+                e_k = np.zeros(m)
+                e_k[k] = 1.0
+                for i in range(orth_coeffs.shape[1]):
+                    d = orth_coeffs[:, i]
+                    e_k -= np.dot(e_k, d) * d
+                if np.linalg.norm(e_k) > 1e-10:
+                    c = e_k
+                    norm_c = np.linalg.norm(c)
+                    break
+        c /= norm_c
+
+        # Convert to n-dimensional space
+        v = Q_U @ c
+
+        # Sign convention: largest absolute entry positive
+        i_max = int(np.argmax(np.abs(v)))
+        if v[i_max] < 0:
+            c = -c
+            v = -v
+
+        result[:, j] = v
+        orth_coeffs = (
+            np.column_stack([orth_coeffs, c]) if orth_coeffs.shape[1] > 0 else c.reshape(-1, 1)
+        )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Unified canonicalization dispatcher
+# ---------------------------------------------------------------------------
+
+CANONICALIZATION_METHODS = (
+    "spielman",
+    "maxabs",
+    "random_fixed",
+    "random_augmented",
+    "map",
+    "oap",
+    "none",
+)
+
+
+def canonicalize_maxabs(eigenvectors):
+    """Max-absolute-value sign convention with unique-tie check.
+
+    For each eigenvector column, find the entry with the largest absolute
+    value. If that entry is unique (no other entry has the same absolute
+    value), flip the eigenvector so that entry is positive. If the max
+    absolute value is not unique, leave the eigenvector unchanged.
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (N, k)
+
+    Returns
+    -------
+    ndarray of shape (N, k), sign-canonicalized copy.
+    """
+    eigenvectors = np.asarray(eigenvectors, dtype=float).copy()
+    for j in range(eigenvectors.shape[1]):
+        col = eigenvectors[:, j]
+        abs_col = np.abs(col)
+        max_abs = abs_col.max()
+        mask = np.isclose(abs_col, max_abs, rtol=1e-8, atol=1e-12)
+        if mask.sum() == 1:
+            idx = np.argmax(abs_col)
+            if col[idx] < 0:
+                eigenvectors[:, j] = -col
+    return eigenvectors
+
+
+def canonicalize_random_fixed(eigenvectors, sample_idx):
+    """Deterministic random sign flips seeded by sample index.
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (N, k)
+    sample_idx : int
+        Index used for seeding (e.g. graph/shape index in dataset).
+
+    Returns
+    -------
+    ndarray of shape (N, k)
+    """
+    result = np.asarray(eigenvectors, dtype=float).copy()
+    for j in range(result.shape[1]):
+        rng = np.random.RandomState(seed=sample_idx * 1000 + j)
+        if rng.random() < 0.5:
+            result[:, j] = -result[:, j]
+    return result
+
+
+def canonicalize_random_augmented(eigenvectors):
+    """Non-deterministic random sign flips (data augmentation).
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (N, k)
+
+    Returns
+    -------
+    ndarray of shape (N, k)
+    """
+    result = np.asarray(eigenvectors, dtype=float).copy()
+    for j in range(result.shape[1]):
+        if np.random.random() < 0.5:
+            result[:, j] = -result[:, j]
+    return result
+
+
+def canonicalize(eigenvectors, eigenvalues=None, method="maxabs", sample_idx=0):
+    """Unified dispatcher for eigenvector canonicalization.
+
+    Routes to the appropriate canonicalization implementation based on
+    ``method``.
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (N, k)
+    eigenvalues : ndarray of shape (k,) or None
+        Required for ``spielman``, ``map``, and ``oap`` methods.
+    method : str
+        One of :data:`CANONICALIZATION_METHODS`.
+    sample_idx : int
+        Index used for seeding ``random_fixed`` method.
+
+    Returns
+    -------
+    ndarray of shape (N, k), canonicalized copy.
+
+    Raises
+    ------
+    ValueError
+        If ``method`` is unknown or ``eigenvalues`` is missing for methods
+        that require it.
+    """
+    if method not in CANONICALIZATION_METHODS:
+        raise ValueError(
+            f"Unknown canonicalization method: {method!r}. Choose from {CANONICALIZATION_METHODS}"
+        )
+
+    needs_eigenvalues = ("spielman", "map", "oap")
+    if method in needs_eigenvalues and eigenvalues is None:
+        raise ValueError(f"eigenvalues required for method={method!r}")
+
+    if method == "spielman":
+        return spectral_canonicalize(eigenvectors, eigenvalues)
+    elif method == "maxabs":
+        return canonicalize_maxabs(eigenvectors)
+    elif method == "random_fixed":
+        return canonicalize_random_fixed(eigenvectors, sample_idx)
+    elif method == "random_augmented":
+        return canonicalize_random_augmented(eigenvectors)
+    elif method == "map":
+        return spectral_canonicalize_map(eigenvectors, eigenvalues)
+    elif method == "oap":
+        return spectral_canonicalize_oap(eigenvectors, eigenvalues)
+    elif method == "none":
+        return np.asarray(eigenvectors, dtype=float).copy()

@@ -23,6 +23,7 @@ from src.experiments.deep_sets.dataset_pca import PCAModelNet  # noqa: E402
 from src.experiments.deep_sets.model_hks import (  # noqa: E402
     HKSDeepSetsClassifier,
 )
+from src.training import make_train_val_split  # noqa: E402
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
@@ -151,13 +152,14 @@ def main():
         f"Loading {args.dataset} training set (PCA-canonicalized xyz, "
         f"sign_method={args.sign_method})..."
     )
-    train_ds = PCAModelNet(
+    full_train_ds = PCAModelNet(
         args.data_dir,
         dataset=args.dataset,
         split="train",
         max_points=args.max_points,
         sign_method=args.sign_method,
     )
+    train_ds, val_ds = make_train_val_split(full_train_ds, val_fraction=0.2, seed=42)
     print(f"Loading {args.dataset} test set...")
     test_ds = PCAModelNet(
         args.data_dir,
@@ -166,13 +168,19 @@ def main():
         max_points=args.max_points,
         sign_method=args.sign_method,
     )
-    print(f"Train: {len(train_ds)} shapes, Test: {len(test_ds)} shapes")
-    print(f"Classes: {train_ds.classes}")
+    print(f"Train: {len(train_ds)} shapes, Val: {len(val_ds)} shapes, Test: {len(test_ds)} shapes")
+    print(f"Classes: {full_train_ds.classes}")
 
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
+        num_workers=4,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
         num_workers=4,
     )
     test_loader = DataLoader(
@@ -183,7 +191,7 @@ def main():
     )
 
     # Model: HKSDeepSetsClassifier with n_times=0 (xyz only)
-    n_classes = len(train_ds.classes)
+    n_classes = len(full_train_ds.classes)
     model = HKSDeepSetsClassifier(
         in_channels=3,
         n_times=0,
@@ -205,26 +213,32 @@ def main():
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
-    best_acc = 0.0
+    best_val_acc = 0.0
 
     # Training loop
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        test_acc = evaluate(model, test_loader, device)
+        val_acc = evaluate(model, val_loader, device)
         scheduler.step()
 
-        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  test_acc={test_acc:.4f}")
+        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  val_acc={val_acc:.4f}")
 
-        if test_acc > best_acc:
-            best_acc = test_acc
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             torch.save(model.state_dict(), save_dir / "best_model.pt")
 
-    print(f"Best test accuracy: {best_acc:.4f}")
+    print(f"\nBest validation accuracy: {best_val_acc:.4f}")
+
+    # Final test evaluation (once)
+    model.load_state_dict(torch.load(save_dir / "best_model.pt", weights_only=True))
+    test_acc = evaluate(model, test_loader, device)
+    print(f"Final test accuracy: {test_acc:.4f}")
     print(f"Model saved to {save_dir / 'best_model.pt'}")
 
     # Save results
     results = {
-        "best_test_acc": best_acc,
+        "best_val_acc": best_val_acc,
+        "test_acc": test_acc,
         "dataset": args.dataset,
         "sign_method": args.sign_method,
         "max_points": args.max_points,

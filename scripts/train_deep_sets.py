@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.experiments.deep_sets.dataset import DeepSetsModelNet  # noqa: E402
 from src.experiments.deep_sets.model import DeepSetsClassifier, SpectrumClassifier  # noqa: E402
+from src.training import make_train_val_split  # noqa: E402
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
@@ -120,6 +121,7 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay")
     parser.add_argument("--device", type=str, default="auto", help="Device (cpu/cuda/auto)")
+    parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (0=safe)")
     parser.add_argument(
         "--save-dir",
         type=str,
@@ -141,7 +143,7 @@ def main():
         f"(canonicalization={args.canonicalization}, k={args.n_eigs})..."
     )
     include_xyz = not args.no_xyz
-    train_ds = DeepSetsModelNet(
+    full_train_ds = DeepSetsModelNet(
         args.data_dir,
         dataset=args.dataset,
         split="train",
@@ -152,6 +154,7 @@ def main():
         weighted=args.weighted,
         include_xyz=include_xyz,
     )
+    train_ds, val_ds = make_train_val_split(full_train_ds, val_fraction=0.2, seed=42)
     print(f"Loading {args.dataset} test set...")
     test_ds = DeepSetsModelNet(
         args.data_dir,
@@ -164,14 +167,21 @@ def main():
         weighted=args.weighted,
         include_xyz=include_xyz,
     )
-    print(f"Train: {len(train_ds)} shapes, Test: {len(test_ds)} shapes")
-    print(f"Classes: {train_ds.classes}")
+    print(f"Train: {len(train_ds)} shapes, Val: {len(val_ds)} shapes, Test: {len(test_ds)} shapes")
+    print(f"Classes: {full_train_ds.classes}")
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
+    )
 
     # Model
-    n_classes = len(train_ds.classes)
+    n_classes = len(full_train_ds.classes)
     in_channels = 3 if include_xyz else 0
     if args.spectrum_only:
         model = SpectrumClassifier(
@@ -198,26 +208,31 @@ def main():
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
-    best_acc = 0.0
+    best_val_acc = 0.0
 
     # Training loop
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        test_acc = evaluate(model, test_loader, device)
+        val_acc = evaluate(model, val_loader, device)
         scheduler.step()
 
-        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  test_acc={test_acc:.4f}")
+        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  val_acc={val_acc:.4f}")
 
-        if test_acc > best_acc:
-            best_acc = test_acc
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             torch.save(model.state_dict(), save_dir / "best_model.pt")
 
-    print(f"Best test accuracy: {best_acc:.4f}")
-    print(f"Model saved to {save_dir / 'best_model.pt'}")
+    print(f"\nBest validation accuracy: {best_val_acc:.4f}")
+
+    # Final test evaluation (once)
+    model.load_state_dict(torch.load(save_dir / "best_model.pt", weights_only=True))
+    test_acc = evaluate(model, test_loader, device)
+    print(f"Final test accuracy: {test_acc:.4f}")
 
     # Save results
     results = {
-        "best_test_acc": best_acc,
+        "best_val_acc": best_val_acc,
+        "test_acc": test_acc,
         "dataset": args.dataset,
         "scaling_mode": args.scaling_mode,
         "n_eigs": args.n_eigs,

@@ -24,12 +24,15 @@ from src.experiments.spectral_transformer.train import (
     evaluate_spectral_dist,
     train_one_epoch_spectral_dist,
 )
+from src.training import make_train_val_split  # noqa: E402
 
 
 def main():
     parser = argparse.ArgumentParser(description="Train spectral distance model on ModelNet")
     parser.add_argument("--data-dir", type=str, default="data", help="Root data directory")
-    parser.add_argument("--variant", type=int, default=10, choices=[10, 40], help="ModelNet variant")
+    parser.add_argument(
+        "--variant", type=int, default=10, choices=[10, 40], help="ModelNet variant"
+    )
     parser.add_argument("--n-points", type=int, default=512, help="Points per shape")
     parser.add_argument("--n-eigs", type=int, default=16, help="Number of eigenvectors")
     parser.add_argument("--n-neighbors", type=int, default=12, help="k-NN neighbors")
@@ -44,7 +47,9 @@ def main():
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--device", type=str, default="auto", help="Device (cpu/cuda/auto)")
     parser.add_argument("--download", action="store_true", help="Download ModelNet if missing")
-    parser.add_argument("--save-dir", type=str, default="results/spectral_distance", help="Save directory")
+    parser.add_argument(
+        "--save-dir", type=str, default="results/spectral_distance", help="Save directory"
+    )
     args = parser.parse_args()
 
     if args.device == "auto":
@@ -55,7 +60,7 @@ def main():
 
     # Datasets
     print(f"Loading ModelNet{args.variant} training set (spectral distances)...")
-    train_ds = SpectralDistanceModelNet(
+    full_train_ds = SpectralDistanceModelNet(
         args.data_dir,
         split="train",
         n_points=args.n_points,
@@ -64,6 +69,7 @@ def main():
         download=args.download,
         variant=args.variant,
     )
+    train_ds, val_ds = make_train_val_split(full_train_ds, val_fraction=0.2, seed=42)
     print(f"Loading ModelNet{args.variant} test set (spectral distances)...")
     test_ds = SpectralDistanceModelNet(
         args.data_dir,
@@ -74,10 +80,11 @@ def main():
         download=False,
         variant=args.variant,
     )
-    print(f"Train: {len(train_ds)} shapes, Test: {len(test_ds)} shapes")
-    print(f"Classes: {train_ds.classes}")
+    print(f"Train: {len(train_ds)} shapes, Val: {len(val_ds)} shapes, Test: {len(test_ds)} shapes")
+    print(f"Classes: {full_train_ds.classes}")
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     # Model
@@ -89,7 +96,7 @@ def main():
         dim_feedforward=args.dim_feedforward,
         n_spectral_channels=args.n_eigs,
         dropout=args.dropout,
-        n_classes=len(train_ds.classes),
+        n_classes=len(full_train_ds.classes),
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -101,20 +108,27 @@ def main():
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
-    best_acc = 0.0
+    best_val_acc = 0.0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch_spectral_dist(model, train_loader, criterion, optimizer, device)
-        test_acc = evaluate_spectral_dist(model, test_loader, device)
+        train_loss = train_one_epoch_spectral_dist(
+            model, train_loader, criterion, optimizer, device
+        )
+        val_acc = evaluate_spectral_dist(model, val_loader, device)
         scheduler.step()
 
-        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  test_acc={test_acc:.4f}")
+        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  val_acc={val_acc:.4f}")
 
-        if test_acc > best_acc:
-            best_acc = test_acc
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             torch.save(model.state_dict(), save_dir / "best_model.pt")
 
-    print(f"Best test accuracy: {best_acc:.4f}")
+    print(f"\nBest validation accuracy: {best_val_acc:.4f}")
+
+    # Final test evaluation (once)
+    model.load_state_dict(torch.load(save_dir / "best_model.pt", weights_only=True))
+    test_acc = evaluate_spectral_dist(model, test_loader, device)
+    print(f"Final test accuracy: {test_acc:.4f}")
     print(f"Model saved to {save_dir / 'best_model.pt'}")
 
 

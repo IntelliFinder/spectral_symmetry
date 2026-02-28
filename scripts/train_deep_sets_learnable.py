@@ -1,9 +1,34 @@
 #!/usr/bin/env python
-"""Train Deep Sets with HKS features on ModelNet.
+"""Train Deep Sets with learnable spectral weighting on ModelNet.
 
-Uses HKSDeepSetsClassifier with per-point features (optionally xyz + HKS).
-HKS features are sign-invariant by construction, so no eigenvector
-canonicalization is needed.
+Replaces the fixed exponential kernel in HKS with a learned MLP that maps
+the full eigenvalue spectrum to a (K, T) weighting matrix.  This allows the
+model to learn inter-eigenvalue relationships that the fixed exponential cannot.
+
+Recommended runs (MN10, k_eig=8, T=32, hidden=512, 200 epochs):
+
+  # Run 1 -- squared (sign-invariant), compare vs HKS 80.40%
+  python scripts/train_deep_sets_learnable.py --dataset ModelNet10 \\
+      --n-eigs 8 --n-output-channels 32 --hidden-dim 512 \\
+      --epochs 200 --save-dir results/learnable_squared_mn10
+
+  # Run 2 -- non-squared + spielman canon, compare vs WES 79.41%
+  python scripts/train_deep_sets_learnable.py --dataset ModelNet10 \\
+      --n-eigs 8 --n-output-channels 32 --hidden-dim 512 \\
+      --no-squared --canonicalization spielman \\
+      --epochs 200 --save-dir results/learnable_spielman_mn10
+
+  # Run 3 -- non-squared + maxabs canon
+  python scripts/train_deep_sets_learnable.py --dataset ModelNet10 \\
+      --n-eigs 8 --n-output-channels 32 --hidden-dim 512 \\
+      --no-squared --canonicalization maxabs \\
+      --epochs 200 --save-dir results/learnable_maxabs_mn10
+
+  # Run 4 -- non-squared + random (control)
+  python scripts/train_deep_sets_learnable.py --dataset ModelNet10 \\
+      --n-eigs 8 --n-output-channels 32 --hidden-dim 512 \\
+      --no-squared --canonicalization random \\
+      --epochs 200 --save-dir results/learnable_random_mn10
 """
 
 import argparse
@@ -19,10 +44,8 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.experiments.deep_sets.dataset_hks import HKSModelNet  # noqa: E402
-from src.experiments.deep_sets.model_hks import (  # noqa: E402
-    HKSDeepSetsClassifier,
-)
+from src.experiments.deep_sets.dataset_learnable import LearnableSpectralModelNet  # noqa: E402
+from src.experiments.deep_sets.model_learnable import LearnableSpectralDeepSets  # noqa: E402
 from src.training import make_train_val_split  # noqa: E402
 
 
@@ -31,12 +54,13 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
     total_loss = 0.0
     n_samples = 0
-    for features, mask, labels in loader:
+    for features, eigenvalues, mask, labels in loader:
         features = features.to(device)
+        eigenvalues = eigenvalues.to(device)
         mask = mask.to(device)
         labels = labels.to(device)
 
-        logits = model(features, mask)
+        logits = model(features, eigenvalues, mask)
         loss = criterion(logits, labels)
 
         optimizer.zero_grad()
@@ -54,12 +78,13 @@ def evaluate(model, loader, device):
     model.eval()
     correct = 0
     total = 0
-    for features, mask, labels in loader:
+    for features, eigenvalues, mask, labels in loader:
         features = features.to(device)
+        eigenvalues = eigenvalues.to(device)
         mask = mask.to(device)
         labels = labels.to(device)
 
-        logits = model(features, mask)
+        logits = model(features, eigenvalues, mask)
         preds = logits.argmax(dim=1)
         correct += (preds == labels).sum().item()
         total += labels.size(0)
@@ -67,13 +92,10 @@ def evaluate(model, loader, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Deep Sets with HKS features on ModelNet")
-    parser.add_argument(
-        "--data-dir",
-        type=str,
-        default="data",
-        help="Root data directory",
+    parser = argparse.ArgumentParser(
+        description="Train Deep Sets with learnable spectral weighting on ModelNet"
     )
+    parser.add_argument("--data-dir", type=str, default="data", help="Root data directory")
     parser.add_argument(
         "--dataset",
         type=str,
@@ -81,29 +103,16 @@ def main():
         choices=["ModelNet10", "ModelNet40"],
         help="Dataset name",
     )
+    parser.add_argument("--max-points", type=int, default=1024, help="Max points per shape")
+    parser.add_argument("--n-eigs", type=int, default=8, help="Number of eigenpairs (K)")
     parser.add_argument(
-        "--max-points",
-        type=int,
-        default=1024,
-        help="Max points per shape",
-    )
-    parser.add_argument(
-        "--n-eigs",
+        "--n-output-channels",
         type=int,
         default=32,
-        help="Number of eigenpairs for HKS computation",
+        help="Number of output spectral channels T (analogous to HKS time scales)",
     )
     parser.add_argument(
-        "--n-neighbors",
-        type=int,
-        default=30,
-        help="k-NN neighbors for graph construction",
-    )
-    parser.add_argument(
-        "--n-times",
-        type=int,
-        default=16,
-        help="Number of HKS time samples",
+        "--n-neighbors", type=int, default=30, help="k-NN neighbors for graph construction"
     )
     parser.add_argument(
         "--no-weighted",
@@ -116,9 +125,7 @@ def main():
         help="Use combinatorial instead of normalized Laplacian",
     )
     parser.add_argument(
-        "--no-xyz",
-        action="store_true",
-        help="Exclude xyz coords; use only HKS features",
+        "--no-xyz", action="store_true", help="Exclude xyz coords; use only spectral features"
     )
     parser.add_argument(
         "--no-squared",
@@ -133,47 +140,22 @@ def main():
         help="Eigenvector canonicalization method (only used with --no-squared)",
     )
     parser.add_argument(
-        "--hidden-dim",
-        type=int,
-        default=256,
-        help="Hidden dimension",
+        "--hidden-dim", type=int, default=512, help="Hidden dimension for phi/rho networks"
     )
     parser.add_argument(
-        "--epochs",
-        type=int,
-        default=100,
-        help="Training epochs",
+        "--mlp-hidden", type=int, default=128, help="Hidden dimension for spectral weighting MLP"
     )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=32,
-        help="Batch size",
-    )
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=1e-3,
-        help="Learning rate",
-    )
-    parser.add_argument(
-        "--weight-decay",
-        type=float,
-        default=1e-4,
-        help="Weight decay",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="auto",
-        help="Device (cpu/cuda/auto)",
-    )
+    parser.add_argument("--epochs", type=int, default=200, help="Training epochs")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay")
+    parser.add_argument("--device", type=str, default="auto", help="Device (cpu/cuda/auto)")
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers (0=safe)")
     parser.add_argument(
         "--save-dir",
         type=str,
-        default="results/deep_sets_hks",
-        help="Save directory",
+        default="results/learnable_spectral",
+        help="Save directory for model and results",
     )
     args = parser.parse_args()
 
@@ -192,18 +174,17 @@ def main():
     # Datasets
     print(
         f"Loading {args.dataset} training set "
-        f"(n_eigs={args.n_eigs}, n_times={args.n_times}, "
+        f"(n_eigs={args.n_eigs}, T={args.n_output_channels}, "
         f"weighted={weighted}, normalized={normalized}, "
         f"use_squared={use_squared}, canonicalization={args.canonicalization})..."
     )
-    full_train_ds = HKSModelNet(
+    full_train_ds = LearnableSpectralModelNet(
         args.data_dir,
         dataset=args.dataset,
         split="train",
         max_points=args.max_points,
         n_eigs=args.n_eigs,
         n_neighbors=args.n_neighbors,
-        n_times=args.n_times,
         weighted=weighted,
         normalized=normalized,
         include_xyz=include_xyz,
@@ -212,14 +193,13 @@ def main():
     )
     train_ds, val_ds = make_train_val_split(full_train_ds, val_fraction=0.2, seed=42)
     print(f"Loading {args.dataset} test set...")
-    test_ds = HKSModelNet(
+    test_ds = LearnableSpectralModelNet(
         args.data_dir,
         dataset=args.dataset,
         split="test",
         max_points=args.max_points,
         n_eigs=args.n_eigs,
         n_neighbors=args.n_neighbors,
-        n_times=args.n_times,
         weighted=weighted,
         normalized=normalized,
         include_xyz=include_xyz,
@@ -250,12 +230,12 @@ def main():
 
     # Model
     n_classes = len(full_train_ds.classes)
-    in_channels = 3 if include_xyz else 0
-    model = HKSDeepSetsClassifier(
-        in_channels=in_channels,
-        n_times=args.n_times,
+    model = LearnableSpectralDeepSets(
+        n_eigs=args.n_eigs,
+        n_output_channels=args.n_output_channels,
         n_classes=n_classes,
         hidden_dim=args.hidden_dim,
+        mlp_hidden=args.mlp_hidden,
         include_xyz=include_xyz,
     ).to(device)
 
@@ -263,11 +243,7 @@ def main():
     print(f"Model parameters: {n_params:,}")
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(
-        model.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-    )
+    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     save_dir = Path(args.save_dir)
@@ -299,14 +275,15 @@ def main():
         "test_acc": test_acc,
         "dataset": args.dataset,
         "n_eigs": args.n_eigs,
+        "n_output_channels": args.n_output_channels,
         "n_neighbors": args.n_neighbors,
-        "n_times": args.n_times,
         "weighted": weighted,
         "normalized": normalized,
         "include_xyz": include_xyz,
         "use_squared": use_squared,
         "canonicalization": args.canonicalization,
         "hidden_dim": args.hidden_dim,
+        "mlp_hidden": args.mlp_hidden,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "lr": args.lr,

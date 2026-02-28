@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-"""Train Deep Sets with HKS features on ModelNet.
+"""Train Deep Sets with GPS (Global Point Signature) features on ModelNet.
 
-Uses HKSDeepSetsClassifier with per-point features (optionally xyz + HKS).
-HKS features are sign-invariant by construction, so no eigenvector
-canonicalization is needed.
+GPS(i, k) = phi_k(i) / sqrt(lambda_k)  (Rustamov 2007)
+
+GPS is sign-sensitive, so eigenvector canonicalization matters.
+Feature dimension = n_eigs (one value per eigenpair).
 """
 
 import argparse
@@ -19,7 +20,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.experiments.deep_sets.dataset_hks import HKSModelNet  # noqa: E402
+from src.experiments.deep_sets.dataset_gps import GPSModelNet  # noqa: E402
 from src.experiments.deep_sets.model_hks import (  # noqa: E402
     HKSDeepSetsClassifier,
 )
@@ -67,7 +68,7 @@ def evaluate(model, loader, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Deep Sets with HKS features on ModelNet")
+    parser = argparse.ArgumentParser(description="Train Deep Sets with GPS features on ModelNet")
     parser.add_argument(
         "--data-dir",
         type=str,
@@ -91,19 +92,13 @@ def main():
         "--n-eigs",
         type=int,
         default=32,
-        help="Number of eigenpairs for HKS computation",
+        help="Number of eigenpairs (= GPS feature dimension)",
     )
     parser.add_argument(
         "--n-neighbors",
         type=int,
         default=30,
         help="k-NN neighbors for graph construction",
-    )
-    parser.add_argument(
-        "--n-times",
-        type=int,
-        default=16,
-        help="Number of HKS time samples",
     )
     parser.add_argument(
         "--no-weighted",
@@ -118,30 +113,25 @@ def main():
     parser.add_argument(
         "--no-xyz",
         action="store_true",
-        help="Exclude xyz coords; use only HKS features",
-    )
-    parser.add_argument(
-        "--no-squared",
-        action="store_true",
-        help="Use v_k(i) instead of v_k(i)^2 (requires canonicalization)",
+        help="Exclude xyz coords; use only GPS features",
     )
     parser.add_argument(
         "--canonicalization",
         type=str,
-        default="none",
+        default="maxabs",
         choices=["spielman", "maxabs", "random", "none"],
-        help="Eigenvector canonicalization method (only used with --no-squared)",
+        help="Eigenvector canonicalization method",
     )
     parser.add_argument(
         "--hidden-dim",
         type=int,
-        default=256,
+        default=512,
         help="Hidden dimension",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=100,
+        default=200,
         help="Training epochs",
     )
     parser.add_argument(
@@ -172,7 +162,7 @@ def main():
     parser.add_argument(
         "--save-dir",
         type=str,
-        default="results/deep_sets_hks",
+        default="results/gps",
         help="Save directory",
     )
     args = parser.parse_args()
@@ -187,43 +177,38 @@ def main():
     weighted = not args.no_weighted
     normalized = not args.no_normalized
     include_xyz = not args.no_xyz
-    use_squared = not args.no_squared
 
     # Datasets
     print(
         f"Loading {args.dataset} training set "
-        f"(n_eigs={args.n_eigs}, n_times={args.n_times}, "
+        f"(n_eigs={args.n_eigs}, "
         f"weighted={weighted}, normalized={normalized}, "
-        f"use_squared={use_squared}, canonicalization={args.canonicalization})..."
+        f"canonicalization={args.canonicalization})..."
     )
-    full_train_ds = HKSModelNet(
+    full_train_ds = GPSModelNet(
         args.data_dir,
         dataset=args.dataset,
         split="train",
         max_points=args.max_points,
         n_eigs=args.n_eigs,
         n_neighbors=args.n_neighbors,
-        n_times=args.n_times,
         weighted=weighted,
         normalized=normalized,
         include_xyz=include_xyz,
-        use_squared=use_squared,
         canonicalization=args.canonicalization,
     )
     train_ds, val_ds = make_train_val_split(full_train_ds, val_fraction=0.2, seed=42)
     print(f"Loading {args.dataset} test set...")
-    test_ds = HKSModelNet(
+    test_ds = GPSModelNet(
         args.data_dir,
         dataset=args.dataset,
         split="test",
         max_points=args.max_points,
         n_eigs=args.n_eigs,
         n_neighbors=args.n_neighbors,
-        n_times=args.n_times,
         weighted=weighted,
         normalized=normalized,
         include_xyz=include_xyz,
-        use_squared=use_squared,
         canonicalization=args.canonicalization,
     )
     print(f"Train: {len(train_ds)} shapes, Val: {len(val_ds)} shapes, Test: {len(test_ds)} shapes")
@@ -248,12 +233,12 @@ def main():
         num_workers=args.num_workers,
     )
 
-    # Model
+    # Model — GPS feature dim = n_eigs (passed as n_times to reuse HKS model)
     n_classes = len(full_train_ds.classes)
     in_channels = 3 if include_xyz else 0
     model = HKSDeepSetsClassifier(
         in_channels=in_channels,
-        n_times=args.n_times,
+        n_times=args.n_eigs,
         n_classes=n_classes,
         hidden_dim=args.hidden_dim,
         include_xyz=include_xyz,
@@ -297,14 +282,13 @@ def main():
     results = {
         "best_val_acc": best_val_acc,
         "test_acc": test_acc,
+        "feature_type": "gps",
         "dataset": args.dataset,
         "n_eigs": args.n_eigs,
         "n_neighbors": args.n_neighbors,
-        "n_times": args.n_times,
         "weighted": weighted,
         "normalized": normalized,
         "include_xyz": include_xyz,
-        "use_squared": use_squared,
         "canonicalization": args.canonicalization,
         "hidden_dim": args.hidden_dim,
         "epochs": args.epochs,

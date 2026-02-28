@@ -22,12 +22,15 @@ from src.experiments.spectral_transformer.dataset import (
 )
 from src.experiments.spectral_transformer.model import SpectralTransformerClassifier
 from src.experiments.spectral_transformer.train import evaluate, train_one_epoch
+from src.training import make_train_val_split  # noqa: E402
 
 
 def main():
     parser = argparse.ArgumentParser(description="Eigenvector-only sweep on ModelNet")
     parser.add_argument("--data-dir", type=str, default="data", help="Root data directory")
-    parser.add_argument("--variant", type=int, default=10, choices=[10, 40], help="ModelNet variant")
+    parser.add_argument(
+        "--variant", type=int, default=10, choices=[10, 40], help="ModelNet variant"
+    )
     parser.add_argument("--n-points", type=int, default=512, help="Points per shape")
     parser.add_argument("--k-eigs", type=int, default=3, help="Number of eigenvector dims to use")
     parser.add_argument("--n-neighbors", type=int, default=12, help="k-NN neighbors")
@@ -42,8 +45,12 @@ def main():
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--device", type=str, default="auto", help="Device (cpu/cuda/auto)")
     parser.add_argument("--download", action="store_true", help="Download ModelNet if missing")
-    parser.add_argument("--canonicalize", action="store_true", help="Canonicalize eigenvector signs")
-    parser.add_argument("--save-dir", type=str, default=None, help="Save directory (auto-generated if not set)")
+    parser.add_argument(
+        "--canonicalize", action="store_true", help="Canonicalize eigenvector signs"
+    )
+    parser.add_argument(
+        "--save-dir", type=str, default=None, help="Save directory (auto-generated if not set)"
+    )
     args = parser.parse_args()
 
     if args.device == "auto":
@@ -61,7 +68,9 @@ def main():
 
     # Load base dataset with n_eigs=8 (max needed)
     n_eigs_base = 8
-    print(f"Loading ModelNet{args.variant} training set (n_eigs={n_eigs_base}, canon={args.canonicalize})...")
+    print(
+        f"Loading ModelNet{args.variant} training set (n_eigs={n_eigs_base}, canon={args.canonicalize})..."
+    )
     train_base = SpectralModelNet(
         args.data_dir,
         split="train",
@@ -85,14 +94,16 @@ def main():
     )
 
     # Wrap with TruncatedSpectralDataset: eigenvectors only, no xyz
-    train_ds = TruncatedSpectralDataset(train_base, k=args.k_eigs, use_xyz=False)
+    full_train_ds = TruncatedSpectralDataset(train_base, k=args.k_eigs, use_xyz=False)
+    train_ds, val_ds = make_train_val_split(full_train_ds, val_fraction=0.2, seed=42)
     test_ds = TruncatedSpectralDataset(test_base, k=args.k_eigs, use_xyz=False)
 
-    print(f"Train: {len(train_ds)} shapes, Test: {len(test_ds)} shapes")
-    print(f"Classes: {train_ds.classes}")
+    print(f"Train: {len(train_ds)} shapes, Val: {len(val_ds)} shapes, Test: {len(test_ds)} shapes")
+    print(f"Classes: {full_train_ds.classes}")
     print(f"Feature dim: {args.k_eigs} (eigenvectors only, no xyz)")
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     # Model: standard transformer with input_dim = k_eigs
@@ -103,7 +114,7 @@ def main():
         num_layers=args.num_layers,
         dim_feedforward=args.dim_feedforward,
         dropout=args.dropout,
-        n_classes=len(train_ds.classes),
+        n_classes=len(full_train_ds.classes),
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -115,20 +126,25 @@ def main():
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
-    best_acc = 0.0
+    best_val_acc = 0.0
 
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        test_acc = evaluate(model, test_loader, device)
+        val_acc = evaluate(model, val_loader, device)
         scheduler.step()
 
-        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  test_acc={test_acc:.4f}")
+        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  val_acc={val_acc:.4f}")
 
-        if test_acc > best_acc:
-            best_acc = test_acc
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             torch.save(model.state_dict(), save_dir / "best_model.pt")
 
-    print(f"Best test accuracy: {best_acc:.4f}")
+    print(f"\nBest validation accuracy: {best_val_acc:.4f}")
+
+    # Final test evaluation (once)
+    model.load_state_dict(torch.load(save_dir / "best_model.pt", weights_only=True))
+    test_acc = evaluate(model, test_loader, device)
+    print(f"Final test accuracy: {test_acc:.4f}")
     print(f"Model saved to {save_dir / 'best_model.pt'}")
 
 

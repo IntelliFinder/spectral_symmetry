@@ -12,7 +12,8 @@ from torch.utils.data import DataLoader
 
 from src.experiments.ptv3.classifier import PTv3Classifier
 from src.experiments.ptv3.dataset import PTv3ModelNet, ptv3_collate_fn
-from src.experiments.ptv3.train import train_one_epoch_ptv3, evaluate_ptv3
+from src.experiments.ptv3.train import evaluate_ptv3, train_one_epoch_ptv3
+from src.training import make_train_val_split  # noqa: E402
 
 
 def main(argv=None):
@@ -39,29 +40,49 @@ def main(argv=None):
 
     # Datasets
     print(f"Loading ModelNet{args.variant} training set...")
-    train_ds = PTv3ModelNet(
-        args.data_dir, split="train", n_points=args.n_points,
-        download=args.download, variant=args.variant,
+    full_train_ds = PTv3ModelNet(
+        args.data_dir,
+        split="train",
+        n_points=args.n_points,
+        download=args.download,
+        variant=args.variant,
     )
+    train_ds, val_ds = make_train_val_split(full_train_ds, val_fraction=0.2, seed=42)
     print(f"Loading ModelNet{args.variant} test set...")
     test_ds = PTv3ModelNet(
-        args.data_dir, split="test", n_points=args.n_points,
-        download=False, variant=args.variant,
+        args.data_dir,
+        split="test",
+        n_points=args.n_points,
+        download=False,
+        variant=args.variant,
     )
-    print(f"Train: {len(train_ds)} shapes, Test: {len(test_ds)} shapes")
-    print(f"Classes: {train_ds.classes}")
+    print(f"Train: {len(train_ds)} shapes, Val: {len(val_ds)} shapes, Test: {len(test_ds)} shapes")
+    print(f"Classes: {full_train_ds.classes}")
 
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch_size, shuffle=True,
-        num_workers=0, collate_fn=ptv3_collate_fn,
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=0,
+        collate_fn=ptv3_collate_fn,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=ptv3_collate_fn,
     )
     test_loader = DataLoader(
-        test_ds, batch_size=args.batch_size, shuffle=False,
-        num_workers=0, collate_fn=ptv3_collate_fn,
+        test_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=ptv3_collate_fn,
     )
 
     # Model
-    n_classes = len(train_ds.classes)
+    n_classes = len(full_train_ds.classes)
     model = PTv3Classifier(
         in_channels=3,
         n_classes=n_classes,
@@ -78,20 +99,25 @@ def main(argv=None):
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
-    best_acc = 0.0
+    best_val_acc = 0.0
 
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch_ptv3(model, train_loader, criterion, optimizer, device)
-        test_acc = evaluate_ptv3(model, test_loader, device)
+        val_acc = evaluate_ptv3(model, val_loader, device)
         scheduler.step()
 
-        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  test_acc={test_acc:.4f}")
+        print(f"Epoch {epoch:3d}/{args.epochs}  loss={train_loss:.4f}  val_acc={val_acc:.4f}")
 
-        if test_acc > best_acc:
-            best_acc = test_acc
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             torch.save(model.state_dict(), save_dir / "best_model.pt")
 
-    print(f"Best test accuracy: {best_acc:.4f}")
+    print(f"\nBest validation accuracy: {best_val_acc:.4f}")
+
+    # Final test evaluation (once)
+    model.load_state_dict(torch.load(save_dir / "best_model.pt", weights_only=True))
+    test_acc = evaluate_ptv3(model, test_loader, device)
+    print(f"Final test accuracy: {test_acc:.4f}")
     print(f"Model saved to {save_dir / 'best_model.pt'}")
 
 

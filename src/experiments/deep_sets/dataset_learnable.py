@@ -1,7 +1,18 @@
-"""Deep Sets ModelNet dataset with eigenvalue-scaled spectral features.
+"""Learnable Spectral Weighting ModelNet dataset for Deep Sets.
 
-Preserves eigenvalues alongside eigenvectors so the Deep Sets model can
-scale eigenvectors by eigenvalue-dependent weights (e.g. 1/sqrt(lambda)).
+Returns raw eigenvectors and eigenvalues so the model can learn its own
+weighting function (replacing the fixed exponential in HKS/WES).
+
+Returns a 4-tuple ``(features, eigenvalues, mask, label)`` where:
+
+- ``features``: ``(max_points, 3 + K)`` -- xyz (optional) || raw eigvec entries
+- ``eigenvalues``: ``(K,)`` -- eigenvalue spectrum (zero-padded if needed)
+- ``mask``: ``(max_points,)`` -- True = padded/invalid
+- ``label``: int class index
+
+The model is responsible for applying learned weights to eigenvectors.
+When ``use_squared=True`` the stored eigvecs are squared (sign-invariant);
+when ``use_squared=False`` they are canonicalized and stored raw.
 """
 
 import numpy as np
@@ -14,26 +25,14 @@ from src.preprocessing import center_and_normalize, random_subsample
 from src.spectral_canonicalization import canonicalize
 from src.spectral_core import build_graph_laplacian, compute_eigenpairs
 
-CANONICALIZATION_CHOICES = ("spielman", "maxabs", "random", "none")
-
-# Map legacy method names to unified dispatcher names
 _METHOD_MAP = {"random": "random_fixed"}
 
 
-class DeepSetsModelNet(Dataset):
-    """ModelNet dataset for Deep Sets with eigenvalue-scaled spectral features.
+class LearnableSpectralModelNet(Dataset):
+    """ModelNet dataset returning raw eigenvectors + eigenvalues.
 
-    Returns ``(features, eigenvalues, mask, label)`` where:
-
-    - ``features``: ``(max_points, 3 + n_eigs)`` float tensor -- xyz
-      concatenated with raw (canonicalized) eigenvectors.
-    - ``eigenvalues``: ``(n_eigs,)`` float tensor -- eigenvalues for
-      scaling in the model.
-    - ``mask``: ``(max_points,)`` bool tensor -- True = padded, False = valid.
-    - ``label``: int class index.
-
-    All spectral computation is done once at ``__init__`` and stored in
-    memory.
+    The eigenvalues are returned alongside features so the model's spectral
+    weighting MLP can condition on the full spectrum.
 
     Parameters
     ----------
@@ -46,16 +45,24 @@ class DeepSetsModelNet(Dataset):
     max_points : int
         Number of points per shape (subsample or zero-pad).
     n_eigs : int
-        Number of eigenvectors/eigenvalues to compute.
+        Number of eigenpairs.
     n_neighbors : int
         k-NN neighbors for graph construction.
-    canonicalization : str
-        One of ``"spielman"``, ``"maxabs"``, ``"random"``, ``"none"``.
     weighted : bool
         If True, use Gaussian-kernel weighted graph Laplacian.
+    normalized : bool
+        If True, use symmetric normalized Laplacian.
+    include_xyz : bool
+        If True, prepend xyz coordinates to eigenvector features.
     sigma : float or None
-        Bandwidth for Gaussian kernel. Auto-computed if None and
-        ``weighted=True``.
+        Bandwidth for Gaussian kernel. Auto-computed if None.
+    use_squared : bool
+        If True, store v_k(i)^2 (sign-invariant).
+        If False, store v_k(i) after canonicalization.
+    canonicalization : str
+        Canonicalization method when ``use_squared=False``. One of
+        ``"spielman"``, ``"maxabs"``, ``"random"``, ``"none"``.
+        Ignored when ``use_squared=True``.
     """
 
     def __init__(
@@ -65,29 +72,26 @@ class DeepSetsModelNet(Dataset):
         split="train",
         max_points=1024,
         n_eigs=8,
-        n_neighbors=12,
-        canonicalization="spielman",
-        weighted=False,
-        sigma=None,
+        n_neighbors=30,
+        weighted=True,
+        normalized=True,
         include_xyz=True,
+        sigma=None,
+        use_squared=True,
+        canonicalization="none",
     ):
         super().__init__()
         self.max_points = max_points
         self.n_eigs = n_eigs
         self.n_neighbors = n_neighbors
-        self.canonicalization = canonicalization
         self.weighted = weighted
-        self.sigma = sigma
+        self.normalized = normalized
         self.include_xyz = include_xyz
+        self.sigma = sigma
+        self.use_squared = use_squared
+        self.canonicalization = canonicalization
         self.coord_dim = 3 if include_xyz else 0
 
-        if canonicalization not in CANONICALIZATION_CHOICES:
-            raise ValueError(
-                f"canonicalization must be one of {CANONICALIZATION_CHOICES}, "
-                f"got {canonicalization!r}"
-            )
-
-        # Resolve variant from dataset name
         if dataset == "ModelNet10":
             variant = 10
         elif dataset == "ModelNet40":
@@ -98,20 +102,13 @@ class DeepSetsModelNet(Dataset):
 
         if variant == 10:
             base_dataset = ModelNet10Dataset(
-                root,
-                split=split,
-                max_points=max_points * 2,
-                download=False,
+                root, split=split, max_points=max_points * 2, download=False
             )
         else:
             base_dataset = ModelNet40Dataset(
-                root,
-                split=split,
-                max_points=max_points * 2,
-                download=False,
+                root, split=split, max_points=max_points * 2, download=False
             )
 
-        # Collect all class names first for a sorted label mapping
         raw_items = []
         class_names = set()
         for name, points in base_dataset:
@@ -123,10 +120,11 @@ class DeepSetsModelNet(Dataset):
         self.classes = sorted(class_names)
         self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
 
-        # Pre-compute spectral features for every shape
         self.data = []
         n_skipped = 0
-        for idx, (name, class_name, points) in enumerate(tqdm(raw_items, desc=f"DeepSets {split}")):
+        desc = f"LearnableSpectral {split}"
+
+        for idx, (name, class_name, points) in enumerate(tqdm(raw_items, desc=desc)):
             points = random_subsample(points, max_points, seed=idx)
             points, _, _ = center_and_normalize(points)
 
@@ -135,62 +133,59 @@ class DeepSetsModelNet(Dataset):
                 n_neighbors=n_neighbors,
                 weighted=weighted,
                 sigma=sigma,
+                normalized=normalized,
             )
 
             try:
                 eigenvalues, eigenvectors = compute_eigenpairs(L, n_eigs=n_eigs)
             except Exception:
-                # Eigensolver failure: use zero eigenvectors, eigenvalues = 1.0
-                # (eigenvalues of 1.0 avoid division-by-zero in 1/sqrt(lambda))
+                # Eigensolver failure: zero features
                 n_actual = points.shape[0]
                 cd = self.coord_dim
                 features = np.zeros((max_points, cd + n_eigs), dtype=np.float32)
                 if cd > 0:
                     features[:n_actual, :cd] = points[:n_actual].astype(np.float32)
-
-                eigenvalues_out = np.ones(n_eigs, dtype=np.float32)
-
+                evals_out = np.zeros(n_eigs, dtype=np.float32)
                 mask = np.ones(max_points, dtype=bool)
                 mask[:n_actual] = False
-
                 label = self.class_to_idx[class_name]
-                self.data.append((features, eigenvalues_out, mask, label))
+                self.data.append((features, evals_out, mask, label))
                 n_skipped += 1
                 continue
 
-            # Apply chosen canonicalization
-            unified_method = _METHOD_MAP.get(canonicalization, canonicalization)
-            eigenvectors = canonicalize(
-                eigenvectors, eigenvalues=eigenvalues, method=unified_method, sample_idx=idx
-            )
+            # Pad eigenvalues to exactly n_eigs (may be fewer if graph is small)
+            k_actual = len(eigenvalues)
+            evals_out = np.zeros(n_eigs, dtype=np.float32)
+            evals_out[:k_actual] = eigenvalues.astype(np.float32)
+
+            # Eigenvector matrix: (N_LCC, k_actual)
+            if use_squared:
+                evecs_feat = eigenvectors**2  # sign-invariant
+            else:
+                unified_method = _METHOD_MAP.get(canonicalization, canonicalization)
+                evecs_feat = canonicalize(
+                    eigenvectors, eigenvalues=eigenvalues, method=unified_method, sample_idx=idx
+                )
 
             n_pts = points.shape[0]
-            n_eigs_actual = eigenvectors.shape[1]
-
-            # Build feature matrix: ALL points kept, eigvecs placed at
-            # LCC indices (non-LCC points get zero eigvecs but stay valid)
             cd = self.coord_dim
-            features = np.zeros((max_points, cd + n_eigs), dtype=np.float32)
+            feat_dim = cd + n_eigs
+
+            # Build feature matrix (max_points, feat_dim)
+            features = np.zeros((max_points, feat_dim), dtype=np.float32)
             if cd > 0:
                 features[:n_pts, :cd] = points.astype(np.float32)
-            features[comp_idx, cd : cd + n_eigs_actual] = eigenvectors.astype(np.float32)
+            # Place eigvec features at LCC point indices, first k_actual columns
+            features[comp_idx, cd : cd + k_actual] = evecs_feat.astype(np.float32)
 
-            # Eigenvalues: pad with 1.0 if fewer than n_eigs were computed
-            eigenvalues_out = np.ones(n_eigs, dtype=np.float32)
-            eigenvalues_out[:n_eigs_actual] = eigenvalues[:n_eigs_actual].astype(np.float32)
-
-            # Mask: True at padded positions (all n_pts points are valid)
             mask = np.ones(max_points, dtype=bool)
             mask[:n_pts] = False
 
             label = self.class_to_idx[class_name]
-            self.data.append((features, eigenvalues_out, mask, label))
+            self.data.append((features, evals_out, mask, label))
 
         if n_skipped > 0:
-            print(
-                f"Warning: {n_skipped} shapes had eigensolver failures "
-                f"(using zero eigvecs, eigenvalues=1.0)"
-            )
+            print(f"Warning: {n_skipped} shapes had eigensolver failures (zero eigvec features)")
 
     def __len__(self):
         return len(self.data)
