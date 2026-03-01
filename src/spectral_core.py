@@ -82,6 +82,41 @@ def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None, no
     return L, component_indices
 
 
+def compute_dataset_sigma(points_list, n_neighbors=12, percentile=50):
+    """Compute a single uniform sigma over a collection of point clouds.
+
+    Collects all nonzero k-NN distances from the training set and returns
+    a single sigma value (the median, or a specified percentile) to be
+    used uniformly for all Gaussian-weighted Laplacians.
+
+    Parameters
+    ----------
+    points_list : list of ndarray
+        List of point clouds, each of shape (N_i, D).
+    n_neighbors : int
+        Number of nearest neighbors.
+    percentile : float
+        Percentile of the distance distribution to use (default 50 = median).
+
+    Returns
+    -------
+    sigma : float
+        Uniform sigma value for the Gaussian kernel.
+    """
+    all_distances = []
+    for points in points_list:
+        k = min(n_neighbors, points.shape[0] - 1)
+        if k < 1:
+            continue
+        A = kneighbors_graph(points, n_neighbors=k, mode="distance", include_self=False)
+        A = A.maximum(A.T)
+        all_distances.append(A.data)
+    if not all_distances:
+        return 1.0
+    all_distances = np.concatenate(all_distances)
+    return float(np.percentile(all_distances, percentile))
+
+
 def compute_eigenpairs(L, n_eigs=20, trivial_threshold=1e-6):
     """Compute the smallest non-trivial eigenpairs of a sparse Laplacian.
 
@@ -105,8 +140,11 @@ def compute_eigenpairs(L, n_eigs=20, trivial_threshold=1e-6):
     eigenvectors : ndarray of shape (N, <= n_eigs)
     """
     n = L.shape[0]
+    if n < 3:
+        return np.array([], dtype=np.float64), np.zeros((n, 0), dtype=np.float64)
     # Request extras to account for trivial eigenvectors we'll discard
-    k = min(n_eigs + 1, n - 2)  # eigsh needs k < n
+    # eigsh requires k < n; also cap at n-2 for numerical stability
+    k = min(n_eigs + 1, n - 2)
     vals, vecs = sla.eigsh(L, k=k, which="SM", tol=1e-8)
     idx = np.argsort(vals)
     vals = vals[idx]
@@ -167,6 +205,36 @@ def compute_hks(eigenvalues, eigenvectors, n_times=16, t_min=None, t_max=None):
     return hks
 
 
+def compute_gps(eigenvalues, eigenvectors):
+    """Compute Global Point Signature (Rustamov 2007).
+
+    GPS(i, k) = phi_k(i) / sqrt(lambda_k)
+
+    The 1/sqrt(lambda_k) weighting emphasizes lower-frequency (more global)
+    eigenvectors. Unlike HKS, GPS is sign-sensitive so canonicalization matters.
+
+    Parameters
+    ----------
+    eigenvalues : ndarray of shape (k,)
+        Non-trivial eigenvalues (positive).
+    eigenvectors : ndarray of shape (N, k)
+        Corresponding eigenvectors.
+
+    Returns
+    -------
+    gps : ndarray of shape (N, k)
+        Global Point Signature at each point for each eigenpair.
+    """
+    if len(eigenvalues) == 0:
+        N = eigenvectors.shape[0] if eigenvectors.ndim == 2 else 0
+        return np.zeros((N, 0), dtype=np.float32)
+
+    evals = np.clip(eigenvalues, 1e-8, None)
+    weights = 1.0 / np.sqrt(evals)  # (k,)
+    gps = (eigenvectors * weights[np.newaxis, :]).astype(np.float32)
+    return gps
+
+
 def uncanonicalizability_score(vec):
     """Compute how close sort(v) is to sort(-v).
 
@@ -179,6 +247,34 @@ def uncanonicalizability_score(vec):
     if norm < 1e-12:
         return 0.0
     return float(np.linalg.norm(v_sorted - v_neg_sorted) / norm)
+
+
+def uncanonicalizability_threshold(n):
+    """Computational-precision threshold for the uncanonicalizability score.
+
+    A truly uncanonicalizable eigenvector has sort(v) = sort(-v) to within
+    numerical precision.  The error in each eigenvector entry from ``eigsh``
+    is O(eps_machine) times a conditioning factor; the score aggregates n
+    entries, so the accumulated error scales as O(n * sqrt(eps_machine)).
+
+    Using ``n * sqrt(eps_machine)`` (≈ n * 1.5e-8) as the threshold cleanly
+    separates genuinely anti-symmetric eigenvectors (scores ~1e-15) from
+    generic zero-mean vectors that are only *incidentally* low-scoring
+    (scores >= 0.01).
+
+    Parameters
+    ----------
+    n : int
+        Number of nodes / points in the graph.
+
+    Returns
+    -------
+    float
+        Threshold below which the score indicates uncanonicalizable sign.
+    """
+    if n <= 2:
+        return 0.0
+    return n * np.sqrt(np.finfo(np.float64).eps)  # ≈ n * 1.49e-8
 
 
 def detect_eigenvalue_multiplicities(eigenvalues, rtol=1e-3):
@@ -242,9 +338,9 @@ def analyze_spectrum(points, n_eigs=20, n_neighbors=12, threshold=None):
     points : ndarray of shape (N, D)
     n_eigs : int
     n_neighbors : int
-    threshold : float or None. If None, uses 5 / sqrt(n_points) which
-        accounts for discretization noise: a perfectly anti-symmetric
-        eigenvector on N discrete samples has score ~ O(1/sqrt(N)).
+    threshold : float or None. If None, uses uncanonicalizability_threshold(n)
+        which combines a noise floor (5/sqrt(n)) with a cap at 35% of the
+        max achievable score for zero-mean vectors.
 
     Returns
     -------
@@ -264,7 +360,7 @@ def analyze_spectrum(points, n_eigs=20, n_neighbors=12, threshold=None):
 
     n_points = eigenvectors.shape[0]
     if threshold is None:
-        threshold = 5.0 / np.sqrt(n_points)
+        threshold = uncanonicalizability_threshold(n_points)
 
     scores = [uncanonicalizability_score(eigenvectors[:, i]) for i in range(eigenvectors.shape[1])]
     uncanonicalizable_raw = [s < threshold for s in scores]

@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.experiments.deep_sets.dataset_learnable import LearnableSpectralModelNet  # noqa: E402
 from src.experiments.deep_sets.model_learnable import LearnableSpectralDeepSets  # noqa: E402
-from src.training import make_train_val_split  # noqa: E402
+from src.training import make_train_val_split, seed_everything, worker_init_fn  # noqa: E402
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
@@ -63,8 +63,12 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         logits = model(features, eigenvalues, mask)
         loss = criterion(logits, labels)
 
+        if torch.isnan(loss):
+            raise RuntimeError("NaN loss detected")
+
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         total_loss += loss.item() * labels.size(0)
@@ -157,7 +161,10 @@ def main():
         default="results/learnable_spectral",
         help="Save directory for model and results",
     )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
+
+    seed_everything(args.seed)
 
     # Device setup
     if args.device == "auto":
@@ -214,18 +221,24 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
     test_loader = DataLoader(
         test_ds,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
 
     # Model

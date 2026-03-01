@@ -99,11 +99,11 @@ class GatedSpectralPTv3Classifier(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(final_channels, 256),
             nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, 128),
             nn.BatchNorm1d(128),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, n_classes),
         )
@@ -124,7 +124,7 @@ class GatedSpectralPTv3Classifier(nn.Module):
             data_dict["grid_size"] = self.grid_size
 
         # Extract eigvecs before Point() consumes the dict
-        eigvec = data_dict.pop("eigvec")
+        eigvec = data_dict["eigvec"]
 
         # Standard PTv3 preprocessing: Point -> serialization -> sparsify -> embedding
         point = Point(data_dict)

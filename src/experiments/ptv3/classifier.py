@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+
 from .ptv3_model import PointTransformerV3
 
 
@@ -91,8 +92,7 @@ class PTv3PointceptClassifier(nn.Module):
     - grid_size=0.01
     """
 
-    def __init__(self, in_channels=6, n_classes=40, grid_size=0.01,
-                 drop_path=0.3, **ptv3_kwargs):
+    def __init__(self, in_channels=6, n_classes=40, grid_size=0.01, drop_path=0.3, **ptv3_kwargs):
         super().__init__()
         ptv3_defaults = dict(
             in_channels=in_channels,
@@ -127,11 +127,11 @@ class PTv3PointceptClassifier(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(final_channels, 256),
             nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, 128),
             nn.BatchNorm1d(128),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, n_classes),
         )

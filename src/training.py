@@ -1,13 +1,48 @@
 """Shared training utilities for classification experiments.
 
-Provides deterministic train/val splitting and a reusable training loop
-that selects the best model by validation accuracy and reports test
-accuracy once after training completes.
+Provides deterministic train/val splitting, reproducibility helpers,
+and a reusable training loop that selects the best model by validation
+accuracy and reports test accuracy once after training completes.
 """
+
+import os
+import random
 
 import numpy as np
 import torch
 from torch.utils.data import Subset
+
+
+def seed_everything(seed=42):
+    """Set all random seeds for reproducibility.
+
+    Seeds Python, NumPy, PyTorch (CPU + all CUDA devices), and sets
+    cuDNN to deterministic mode.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed to use everywhere.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def worker_init_fn(worker_id):
+    """DataLoader worker init function for reproducible data loading.
+
+    Each worker gets a unique seed derived from the base NumPy seed
+    and the worker ID, preventing all workers from producing identical
+    random sequences.
+    """
+    worker_seed = torch.initial_seed() % (2**32) + worker_id
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def make_train_val_split(dataset, val_fraction=0.2, seed=42):

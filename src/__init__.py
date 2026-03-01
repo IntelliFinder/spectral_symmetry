@@ -5,6 +5,7 @@ from .preprocessing import center_and_normalize, load_processed, random_subsampl
 from .spectral_core import (
     analyze_spectrum,
     build_graph_laplacian,
+    compute_dataset_sigma,
     compute_eigenpairs,
     detect_eigenvalue_multiplicities,
     uncanonicalizability_score,
@@ -13,6 +14,7 @@ from .spectral_core import (
 __all__ = [
     "analyze_spectrum",
     "build_graph_laplacian",
+    "compute_dataset_sigma",
     "compute_eigenpairs",
     "detect_eigenvalue_multiplicities",
     "uncanonicalizability_score",

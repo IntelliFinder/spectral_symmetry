@@ -23,7 +23,7 @@ from src.experiments.spectral_transformer.train import (
     evaluate_dist,
     train_one_epoch_dist,
 )
-from src.training import make_train_val_split  # noqa: E402
+from src.training import make_train_val_split, seed_everything, worker_init_fn  # noqa: E402
 
 
 def main():
@@ -49,7 +49,10 @@ def main():
     parser.add_argument(
         "--save-dir", type=str, default="results/spectral_node", help="Save directory"
     )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
+
+    seed_everything(args.seed)
 
     if args.device == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -82,9 +85,30 @@ def main():
     print(f"Train: {len(train_ds)} shapes, Val: {len(val_ds)} shapes, Test: {len(test_ds)} shapes")
     print(f"Classes: {full_train_ds.classes}")
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
+    )
 
     # Model: DistanceTransformerClassifier with input_dim = 3 + n_eigs
     model = DistanceTransformerClassifier(

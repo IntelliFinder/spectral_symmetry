@@ -19,6 +19,7 @@ from src.preprocessing import center_and_normalize, random_subsample
 from src.spectral_canonicalization import canonicalize
 from src.spectral_core import (
     build_graph_laplacian,
+    compute_dataset_sigma,
     compute_eigenpairs,
     compute_gps,
 )
@@ -125,6 +126,16 @@ class GPSModelNet(Dataset):
 
         self.classes = sorted(class_names)
         self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
+
+        # Compute uniform sigma across the dataset when using weighted Laplacians
+        if weighted and sigma is None:
+            sample_points = []
+            for idx, (name, class_name, points) in enumerate(raw_items[:200]):
+                pts = random_subsample(points, max_points, seed=idx)
+                pts, _, _ = center_and_normalize(pts)
+                sample_points.append(pts)
+            sigma = compute_dataset_sigma(sample_points, n_neighbors=n_neighbors)
+            self.sigma = sigma
 
         # Pre-compute GPS features for every shape
         self.data = []

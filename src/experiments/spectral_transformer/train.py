@@ -9,7 +9,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
-from src.training import make_train_val_split
+from src.training import make_train_val_split, seed_everything, worker_init_fn
 
 from .dataset import SpectralModelNet
 from .model import SpectralTransformerClassifier
@@ -28,8 +28,12 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         logits = model(features, mask)
         loss = criterion(logits, labels)
 
+        if torch.isnan(loss):
+            raise RuntimeError("NaN loss detected")
+
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         total_loss += loss.item() * features.size(0)
@@ -69,8 +73,12 @@ def train_one_epoch_dist(model, loader, criterion, optimizer, device):
         logits = model(features, dist_matrix, mask)
         loss = criterion(logits, labels)
 
+        if torch.isnan(loss):
+            raise RuntimeError("NaN loss detected")
+
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         total_loss += loss.item() * features.size(0)
@@ -112,8 +120,12 @@ def train_one_epoch_spectral_dist(model, loader, criterion, optimizer, device):
         logits = model(features, dist_matrix, spectral_dists, mask)
         loss = criterion(logits, labels)
 
+        if torch.isnan(loss):
+            raise RuntimeError("NaN loss detected")
+
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         total_loss += loss.item() * features.size(0)
@@ -167,7 +179,10 @@ def main(argv=None):
         help="Canonicalize eigenvector signs",
     )
     parser.add_argument("--save-dir", type=str, default="results/classifier", help="Save directory")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args(argv)
+
+    seed_everything(args.seed)
 
     if args.device == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -202,9 +217,30 @@ def main(argv=None):
     print(f"Train: {len(train_ds)} shapes, Val: {len(val_ds)} shapes, Test: {len(test_ds)} shapes")
     print(f"Classes: {full_train_ds.classes}")
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
+    )
 
     # Model
     input_dim = 3 + args.n_eigs

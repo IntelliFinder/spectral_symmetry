@@ -1,7 +1,6 @@
 """Training loop for PTv3 classifier on ModelNet."""
 
 import torch
-import torch.nn as nn
 
 
 def train_one_epoch_ptv3(model, loader, criterion, optimizer, device):
@@ -12,16 +11,19 @@ def train_one_epoch_ptv3(model, loader, criterion, optimizer, device):
     for data_dict, labels in loader:
         # Move tensors to device
         data_dict = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in data_dict.items()
+            k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in data_dict.items()
         }
         labels = labels.to(device)
 
         logits = model(data_dict)
         loss = criterion(logits, labels)
 
+        if torch.isnan(loss):
+            raise RuntimeError("NaN loss detected")
+
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         batch_size = labels.size(0)
@@ -38,8 +40,7 @@ def evaluate_ptv3(model, loader, device):
     total = 0
     for data_dict, labels in loader:
         data_dict = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in data_dict.items()
+            k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in data_dict.items()
         }
         labels = labels.to(device)
 

@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from src.experiments.ptv3.classifier import PTv3Classifier
 from src.experiments.ptv3.dataset import PTv3SpectralModelNet, ptv3_collate_fn
 from src.experiments.ptv3.train import evaluate_ptv3, train_one_epoch_ptv3
-from src.training import make_train_val_split  # noqa: E402
+from src.training import make_train_val_split, seed_everything, worker_init_fn  # noqa: E402
 
 
 def main(argv=None):
@@ -33,8 +33,11 @@ def main(argv=None):
     parser.add_argument("--download", action="store_true")
     parser.add_argument("--canonicalize", action="store_true", default=True)
     parser.add_argument("--no-canonicalize", dest="canonicalize", action="store_false")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--save-dir", type=str, default="results/ptv3_spectral")
     args = parser.parse_args(argv)
+
+    seed_everything(args.seed)
 
     if args.device == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -75,6 +78,8 @@ def main(argv=None):
         shuffle=True,
         num_workers=0,
         collate_fn=ptv3_collate_fn,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
     val_loader = DataLoader(
         val_ds,
@@ -82,6 +87,8 @@ def main(argv=None):
         shuffle=False,
         num_workers=0,
         collate_fn=ptv3_collate_fn,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
     test_loader = DataLoader(
         test_ds,
@@ -89,6 +96,8 @@ def main(argv=None):
         shuffle=False,
         num_workers=0,
         collate_fn=ptv3_collate_fn,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
 
     # Model

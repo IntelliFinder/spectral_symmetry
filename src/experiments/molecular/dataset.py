@@ -304,7 +304,7 @@ class MolecularLapPEDataset:
         )
         return out
 
-    def get_dataloader(self, split, batch_size=32, shuffle=True, num_workers=0):
+    def get_dataloader(self, split, batch_size=32, shuffle=True, num_workers=0, **kwargs):
         """Create a DataLoader for the given split.
 
         Parameters
@@ -314,6 +314,9 @@ class MolecularLapPEDataset:
         batch_size : int
         shuffle : bool
         num_workers : int
+        **kwargs
+            Additional keyword arguments passed to ``DataLoader``
+            (e.g. ``pin_memory``, ``worker_init_fn``).
 
         Returns
         -------
@@ -321,7 +324,13 @@ class MolecularLapPEDataset:
         """
         split_indices = self.split_dict[split].numpy().tolist()
         ds = _SplitView(self, split_indices, split=split)
-        return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+        return DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            **kwargs,
+        )
 
     def _get_by_graph_idx(self, graph_idx, augment=True):
         """Get a single graph by its OGB index.

@@ -31,7 +31,7 @@ from src.experiments.ptv3.dataset_spectral_pointcept import (
 )
 from src.experiments.ptv3.gated_classifier import GatedSpectralPTv3Classifier
 from src.experiments.ptv3.lovasz_loss import LovaszLoss
-from src.training import make_train_val_split  # noqa: E402
+from src.training import make_train_val_split, seed_everything, worker_init_fn  # noqa: E402
 
 GRID_SAMPLE_KEYS = ("coord", "normal", "feat", "eigvec")
 
@@ -197,7 +197,10 @@ def main(argv=None):
     )
     parser.add_argument("--weighted", action="store_true")
     parser.add_argument("--n-neighbors", type=int, default=12)
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args(argv)
+
+    seed_everything(args.seed)
 
     if args.device == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -244,6 +247,7 @@ def main(argv=None):
         collate_fn=spectral_pointcept_collate_fn,
         drop_last=True,
         pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
     val_loader = DataLoader(
         val_ds,
@@ -252,6 +256,7 @@ def main(argv=None):
         num_workers=args.num_workers,
         collate_fn=spectral_pointcept_collate_fn,
         pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
     test_loader = DataLoader(
         test_ds,
@@ -260,6 +265,7 @@ def main(argv=None):
         num_workers=args.num_workers,
         collate_fn=spectral_pointcept_collate_fn,
         pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
 
     # Model
@@ -319,10 +325,14 @@ def main(argv=None):
             loss_lovasz = lovasz_loss_fn(logits, labels)
             loss = args.ce_weight * loss_ce + args.lovasz_weight * loss_lovasz
 
+            if torch.isnan(loss):
+                raise RuntimeError("NaN loss detected")
+
             if args.grad_accum > 1:
                 loss = loss / args.grad_accum
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             if (step + 1) % args.grad_accum == 0:
                 optimizer.step()
