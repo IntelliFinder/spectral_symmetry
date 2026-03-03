@@ -44,7 +44,7 @@ def build_train_transform(grid_size=0.01):
             NormalizeCoord(),
             RandomScale(scale=(0.7, 1.5), anisotropic=True),
             RandomShift(shift=[(-0.2, 0.2), (-0.2, 0.2), (0, 0)]),
-            GridSample(grid_size=grid_size, mode="train", keys=("coord", "normal", "feat")),
+            GridSample(grid_size=grid_size, mode="train", keys=("coord", "normal")),
             ShufflePoint(),
         ]
     )
@@ -54,7 +54,7 @@ def build_test_transform(grid_size=0.01):
     return Compose(
         [
             NormalizeCoord(),
-            GridSample(grid_size=grid_size, mode="test", keys=("coord", "normal", "feat")),
+            GridSample(grid_size=grid_size, mode="test", keys=("coord", "normal")),
         ]
     )
 
@@ -108,7 +108,6 @@ def evaluate_with_voting(
         Number of augmented views per sample.
     """
     model.eval()
-    n_classes = None
     correct = 0
     total = len(test_dataset)
 
@@ -117,7 +116,7 @@ def evaluate_with_voting(
         [
             NormalizeCoord(),
             RandomScale(scale=(0.8, 1.2), anisotropic=True),
-            GridSample(grid_size=grid_size, mode="test", keys=("coord", "normal", "feat")),
+            GridSample(grid_size=grid_size, mode="test", keys=("coord", "normal")),
         ]
     )
 
@@ -137,8 +136,10 @@ def evaluate_with_voting(
                 else raw_data["normal"].numpy().copy(),
                 "label": label,
             }
-            data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
             data = voting_transform(data)
+
+            # feat = xyz + normals — built AFTER augmentation
+            data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
 
             # Single-sample batch
             coord = torch.from_numpy(data["coord"]).float().unsqueeze(0).to(device)
@@ -317,9 +318,9 @@ def main(argv=None):
                 loss = loss / args.grad_accum
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             if (step + 1) % args.grad_accum == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
                 optimizer.zero_grad()
                 scheduler.step()

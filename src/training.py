@@ -40,7 +40,7 @@ def worker_init_fn(worker_id):
     and the worker ID, preventing all workers from producing identical
     random sequences.
     """
-    worker_seed = torch.initial_seed() % (2**32) + worker_id
+    worker_seed = (torch.initial_seed() % (2**32) + worker_id) % (2**32)
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
@@ -113,6 +113,9 @@ def run_classification_loop(
     """
     best_val_acc = 0.0
     history = []
+
+    # Save initial model so we always have a checkpoint to load
+    torch.save(model.state_dict(), save_dir / "best_model.pt")
 
     for epoch in range(1, epochs + 1):
         train_loss = train_fn(model, train_loader, criterion, optimizer, device)

@@ -8,9 +8,10 @@ Both provide 6-channel features: xyz + normals.
 """
 
 import pickle
+from pathlib import Path
+
 import numpy as np
 import torch
-from pathlib import Path
 from torch.utils.data import Dataset
 
 # ModelNet40 class names in alphabetical order (standard ordering)
@@ -90,7 +91,7 @@ class ModelNet40WithNormals(Dataset):
 
         self.points_list = data[0]  # list of (1024, 6) arrays
         raw_labels = data[1]  # list of (1,) arrays or ints
-        self.labels = [int(np.array(l).flatten()[0]) for l in raw_labels]
+        self.labels = [int(np.array(lbl).flatten()[0]) for lbl in raw_labels]
 
         print(
             f"ModelNet40WithNormals [{split}]: {len(self.points_list)} shapes, "
@@ -112,12 +113,12 @@ class ModelNet40WithNormals(Dataset):
     def __getitem__(self, idx):
         data = self._get_raw(idx)
 
-        # feat = xyz + normals (6 channels)
-        data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
-
         # Apply transforms
         if self.transform is not None:
             data = self.transform(data)
+
+        # feat = xyz + normals (6 channels) — built AFTER augmentation
+        data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
 
         # Convert to tensors
         result = {
@@ -193,10 +194,12 @@ class ModelNet40NormalResampled(Dataset):
 
     def __getitem__(self, idx):
         data = self._get_raw(idx)
-        data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
 
         if self.transform is not None:
             data = self.transform(data)
+
+        # feat = xyz + normals (6 channels) — built AFTER augmentation
+        data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
 
         result = {
             "coord": torch.from_numpy(data["coord"]).float(),

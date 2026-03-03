@@ -127,12 +127,12 @@ class ModelNet40SpectralNormals(Dataset):
     def __getitem__(self, idx):
         data = self._get_raw(idx)
 
-        # feat = xyz + normals (6 channels)
-        data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
-
-        # Apply transforms (GridSample with eigvec key will subsample eigvecs too)
+        # Apply transforms (GridSample will subsample coord, normal, eigvec)
         if self.transform is not None:
             data = self.transform(data)
+
+        # feat = xyz + normals (6 channels) — built AFTER augmentation
+        data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
 
         # Convert to tensors
         result = {

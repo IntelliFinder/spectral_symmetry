@@ -33,7 +33,7 @@ from src.experiments.ptv3.gated_classifier import GatedSpectralPTv3Classifier
 from src.experiments.ptv3.lovasz_loss import LovaszLoss
 from src.training import make_train_val_split, seed_everything, worker_init_fn  # noqa: E402
 
-GRID_SAMPLE_KEYS = ("coord", "normal", "feat", "eigvec")
+GRID_SAMPLE_KEYS = ("coord", "normal", "eigvec")
 
 
 def build_train_transform(grid_size=0.01):
@@ -127,8 +127,10 @@ def evaluate_with_voting(
                 "eigvec": raw_data["eigvec"].copy(),
                 "label": label,
             }
-            data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
             data = voting_transform(data)
+
+            # feat = xyz + normals — built AFTER augmentation
+            data["feat"] = np.concatenate([data["coord"], data["normal"]], axis=1)
 
             coord = torch.from_numpy(data["coord"]).float().to(device)
             feat = torch.from_numpy(data["feat"]).float().to(device)
@@ -332,9 +334,9 @@ def main(argv=None):
                 loss = loss / args.grad_accum
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             if (step + 1) % args.grad_accum == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
                 optimizer.zero_grad()
                 scheduler.step()

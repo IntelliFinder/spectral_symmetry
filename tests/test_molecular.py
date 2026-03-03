@@ -4,6 +4,9 @@ import torch
 
 from src.experiments.molecular.model import GINLapPE
 
+# Seed for reproducibility across all tests in this module
+_SEED = 42
+
 
 class TestGINLapPEForward:
     """Forward pass shape and gradient tests."""
@@ -23,6 +26,7 @@ class TestGINLapPEForward:
 
     def _make_batch(self, n_nodes=20, n_edges=40, atom_dim=9, pe_dim=8, batch_size=2):
         """Create a fake batched graph."""
+        torch.manual_seed(_SEED)
         x_atom = torch.randn(n_nodes, atom_dim)
         x_pe = torch.randn(n_nodes, pe_dim)
         # Random edges within range
@@ -61,6 +65,7 @@ class TestGINLapPEForward:
 
     def test_single_graph(self):
         """Works with a single graph (batch_size=1) in eval mode."""
+        torch.manual_seed(_SEED)
         model = self._make_model(num_tasks=5)
         model.eval()  # BatchNorm requires >1 sample in training mode
         x_atom = torch.randn(10, 9)
@@ -77,6 +82,7 @@ class TestGINLapPEPermutationInvariance:
 
     def test_node_permutation_invariance(self):
         """Graph-level readout is invariant to node ordering."""
+        torch.manual_seed(_SEED)
         model = GINLapPE(
             atom_dim=9,
             pe_dim=8,

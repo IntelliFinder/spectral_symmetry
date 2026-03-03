@@ -258,7 +258,6 @@ def main():
 
         train_loss = train_one_epoch(model, train_loader, optimizer, device)
         val_metric, _, _, _ = evaluate(model, val_loader, evaluator, device, args.dataset)
-        test_metric, _, _, _ = evaluate(model, test_loader, evaluator, device, args.dataset)
 
         scheduler.step()
         epoch_time = time.time() - epoch_start
@@ -268,7 +267,6 @@ def main():
             "epoch": epoch,
             "train_loss": train_loss,
             "val_metric": val_metric,
-            "test_metric": test_metric,
             "epoch_time_s": epoch_time,
             "wall_time_s": wall_time,
             "lr": optimizer.param_groups[0]["lr"],
@@ -286,7 +284,6 @@ def main():
                 f"Epoch {epoch:3d}/{args.epochs}  "
                 f"loss={train_loss:.4f}  "
                 f"val_{metric_name}={val_metric:.4f}  "
-                f"test_{metric_name}={test_metric:.4f}  "
                 f"({epoch_time:.1f}s)"
             )
 

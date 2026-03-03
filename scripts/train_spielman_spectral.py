@@ -14,12 +14,11 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -34,32 +33,7 @@ from src.experiments.spectral_transformer.train import (  # noqa: E402
     evaluate,
     train_one_epoch,
 )
-from src.training import seed_everything, worker_init_fn  # noqa: E402
-
-
-def make_train_val_split(dataset, val_fraction=0.2, seed=42):
-    """Split a dataset into train/val subsets using deterministic indices.
-
-    Parameters
-    ----------
-    dataset : Dataset
-    val_fraction : float
-    seed : int
-
-    Returns
-    -------
-    train_subset, val_subset : Subset, Subset
-    """
-    n = len(dataset)
-    indices = np.arange(n)
-    rng = np.random.RandomState(seed)
-    rng.shuffle(indices)
-
-    n_val = int(n * val_fraction)
-    val_indices = indices[:n_val].tolist()
-    train_indices = indices[n_val:].tolist()
-
-    return Subset(dataset, train_indices), Subset(dataset, val_indices)
+from src.training import make_train_val_split, seed_everything, worker_init_fn  # noqa: E402
 
 
 def main():

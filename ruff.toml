@@ -2,7 +2,8 @@ line-length = 100
 
 [lint]
 select = ["E", "F", "I", "N", "W"]
-ignore = ["N803", "N806"]
+ignore = ["N803", "N806", "N812"]
 
 [lint.per-file-ignores]
 "scripts/make_latex.py" = ["E501"]
+"scripts/make_hks_report.py" = ["E501"]

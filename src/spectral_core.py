@@ -46,6 +46,10 @@ def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None, no
     component_indices : ndarray, indices into original point array
     """
     n_points = points.shape[0]
+    if n_points <= 1:
+        L = sp.csr_matrix((n_points, n_points))
+        return L, np.arange(n_points)
+
     k = min(n_neighbors, n_points - 1)
 
     if weighted:
@@ -55,7 +59,10 @@ def build_graph_laplacian(points, n_neighbors=12, weighted=False, sigma=None, no
         # Keep only nonzero structure for the Gaussian kernel
         A = sp.csr_matrix(A)
         if sigma is None:
-            sigma = float(np.median(A.data))
+            if len(A.data) == 0 or np.median(A.data) < 1e-12:
+                sigma = 1.0
+            else:
+                sigma = float(np.median(A.data))
         # Apply Gaussian kernel: exp(-d^2 / (2 * sigma^2))
         A.data = np.exp(-(A.data**2) / (2.0 * sigma**2))
     else:

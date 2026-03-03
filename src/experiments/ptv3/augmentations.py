@@ -96,7 +96,7 @@ class GridSample:
         Data keys to subsample along with coord.
     """
 
-    def __init__(self, grid_size=0.01, mode="train", keys=("coord", "normal", "feat"), seed=None):
+    def __init__(self, grid_size=0.01, mode="train", keys=("coord", "normal"), seed=None):
         self.grid_size = grid_size
         self.mode = mode
         self.keys = keys

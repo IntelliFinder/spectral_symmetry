@@ -188,8 +188,9 @@ class TestPermutationProperties:
             h_perm = model.transformer_encoder(h_perm)
 
         # encoder(Px) should equal P(encoder(x))
-        assert torch.allclose(h_perm, h[:, perm, :], atol=1e-5), \
+        assert torch.allclose(h_perm, h[:, perm, :], atol=1e-5), (
             f"Max diff: {(h_perm - h[:, perm, :]).abs().max().item()}"
+        )
 
     def test_encoder_equivariance_with_mask(self):
         """Same equivariance test with a non-trivial padding mask.
@@ -220,8 +221,9 @@ class TestPermutationProperties:
         h_perm_valid = h_perm[0, valid_mask_perm]
         h_reordered_valid = h[0, perm][valid_mask_perm]
 
-        assert torch.allclose(h_perm_valid, h_reordered_valid, atol=1e-5), \
+        assert torch.allclose(h_perm_valid, h_reordered_valid, atol=1e-5), (
             f"Max diff: {(h_perm_valid - h_reordered_valid).abs().max().item()}"
+        )
 
     def test_classifier_invariance(self):
         """model(Px) == model(x) — mean pooling makes output permutation-invariant."""
@@ -237,8 +239,9 @@ class TestPermutationProperties:
             logits = model(x)
             logits_perm = model(x_perm)
 
-        assert torch.allclose(logits, logits_perm, atol=1e-5), \
+        assert torch.allclose(logits, logits_perm, atol=1e-5), (
             f"Max diff: {(logits - logits_perm).abs().max().item()}"
+        )
 
     def test_classifier_invariance_with_mask(self):
         """model(Px, Pm) == model(x, m) with a padding mask."""
@@ -257,8 +260,9 @@ class TestPermutationProperties:
             logits = model(x, mask=mask)
             logits_perm = model(x_perm, mask=mask_perm)
 
-        assert torch.allclose(logits, logits_perm, atol=1e-5), \
+        assert torch.allclose(logits, logits_perm, atol=1e-5), (
             f"Max diff: {(logits - logits_perm).abs().max().item()}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -290,12 +294,12 @@ class TestPositionalEncodingCorrectness:
         feat_dim = 3 + n_eigs
         features = np.zeros((n_points, feat_dim), dtype=np.float32)
         features[:n_actual, :3] = pts_cc.astype(np.float32)
-        features[:n_actual, 3:3 + k] = eigenvectors.astype(np.float32)
+        features[:n_actual, 3 : 3 + k] = eigenvectors.astype(np.float32)
 
         # Verify eigenvector columns match
         for i in range(n_actual):
             np.testing.assert_allclose(
-                features[i, 3:3 + k],
+                features[i, 3 : 3 + k],
                 eigenvectors[i, :].astype(np.float32),
                 atol=1e-6,
                 err_msg=f"Eigenvector mismatch at point {i}",
@@ -415,11 +419,13 @@ class TestCanonicalization:
         """Test canonicalization across multiple eigenvector columns."""
         from src.experiments.spectral_transformer.dataset import canonicalize_eigenvectors
 
-        eigvecs = np.array([
-            [0.1, -0.8, 0.5],
-            [-0.9, 0.2, -0.5],
-            [0.2, 0.1, 0.3],
-        ])
+        eigvecs = np.array(
+            [
+                [0.1, -0.8, 0.5],
+                [-0.9, 0.2, -0.5],
+                [0.2, 0.1, 0.3],
+            ]
+        )
         result = canonicalize_eigenvectors(eigvecs)
 
         # Col 0: max-abs is -0.9 (unique) → flip
@@ -507,8 +513,7 @@ class TestLaplacianEigenmaps:
         D = np.diag(A.sum(axis=1))
 
         # L should equal D - A
-        np.testing.assert_allclose(L_dense, D - A, atol=1e-12,
-                                   err_msg="Laplacian should be D - A")
+        np.testing.assert_allclose(L_dense, D - A, atol=1e-12, err_msg="Laplacian should be D - A")
 
     def test_laplacian_rows_sum_to_zero(self):
         """Each row of L = D - A should sum to zero."""
@@ -519,8 +524,9 @@ class TestLaplacianEigenmaps:
 
         L, _ = build_graph_laplacian(points, n_neighbors=10)
         row_sums = np.array(L.sum(axis=1)).flatten()
-        np.testing.assert_allclose(row_sums, 0.0, atol=1e-12,
-                                   err_msg="Laplacian rows should sum to zero")
+        np.testing.assert_allclose(
+            row_sums, 0.0, atol=1e-12, err_msg="Laplacian rows should sum to zero"
+        )
 
     def test_eigenvalues_sorted_ascending(self):
         """Eigenvalues from compute_eigenpairs should be sorted smallest first."""
@@ -533,8 +539,9 @@ class TestLaplacianEigenmaps:
         eigenvalues, _ = compute_eigenpairs(L, n_eigs=10)
 
         for i in range(len(eigenvalues) - 1):
-            assert eigenvalues[i] <= eigenvalues[i + 1] + 1e-10, \
-                f"Eigenvalues not sorted: λ_{i}={eigenvalues[i]} > λ_{i+1}={eigenvalues[i+1]}"
+            assert eigenvalues[i] <= eigenvalues[i + 1] + 1e-10, (
+                f"Eigenvalues not sorted: λ_{i}={eigenvalues[i]} > λ_{i + 1}={eigenvalues[i + 1]}"
+            )
 
     def test_laplacian_has_zero_eigenvalue(self):
         """For a connected graph, the Laplacian has eigenvalue 0 with constant eigenvector.
@@ -549,11 +556,10 @@ class TestLaplacianEigenmaps:
         points = rng.randn(80, 3)
 
         L, _ = build_graph_laplacian(points, n_neighbors=10)
-        vals, vecs = sla.eigsh(L, k=3, which='SM', tol=1e-8)
+        vals, vecs = sla.eigsh(L, k=3, which="SM", tol=1e-8)
         vals = np.sort(vals)
 
-        assert abs(vals[0]) < 1e-6, \
-            f"Laplacian should have eigenvalue ~0, got {vals[0]}"
+        assert abs(vals[0]) < 1e-6, f"Laplacian should have eigenvalue ~0, got {vals[0]}"
 
     def test_trivial_eigenvector_is_approximately_constant(self):
         """The Laplacian's zero-eigenvalue eigenvector should be approximately constant.
@@ -568,7 +574,7 @@ class TestLaplacianEigenmaps:
         points = rng.randn(80, 3)
 
         L, _ = build_graph_laplacian(points, n_neighbors=10)
-        vals, vecs = sla.eigsh(L, k=3, which='SM', tol=1e-8)
+        vals, vecs = sla.eigsh(L, k=3, which="SM", tol=1e-8)
         idx = np.argsort(vals)
         v0 = vecs[:, idx[0]]
 
@@ -576,8 +582,10 @@ class TestLaplacianEigenmaps:
         expected_constant = np.ones_like(v0_normalized) / np.sqrt(len(v0_normalized))
 
         np.testing.assert_allclose(
-            np.abs(v0_normalized), np.abs(expected_constant), atol=1e-4,
-            err_msg="Trivial eigenvector should be approximately constant"
+            np.abs(v0_normalized),
+            np.abs(expected_constant),
+            atol=1e-4,
+            err_msg="Trivial eigenvector should be approximately constant",
         )
 
     def test_eigenvectors_satisfy_eigenvalue_equation(self):
@@ -596,8 +604,7 @@ class TestLaplacianEigenmaps:
             lam = eigenvalues[i]
             Lv = L_dense @ v
             np.testing.assert_allclose(
-                Lv, lam * v, atol=1e-6,
-                err_msg=f"Eigenvector {i} does not satisfy Lv = λv"
+                Lv, lam * v, atol=1e-6, err_msg=f"Eigenvector {i} does not satisfy Lv = λv"
             )
 
     def test_eigenvectors_are_orthonormal(self):
@@ -612,8 +619,10 @@ class TestLaplacianEigenmaps:
 
         gram = eigenvectors.T @ eigenvectors
         np.testing.assert_allclose(
-            gram, np.eye(eigenvectors.shape[1]), atol=1e-6,
-            err_msg="Eigenvectors should be orthonormal"
+            gram,
+            np.eye(eigenvectors.shape[1]),
+            atol=1e-6,
+            err_msg="Eigenvectors should be orthonormal",
         )
 
     def test_node_encoding_is_ith_entry_of_eigenvectors(self):
@@ -642,13 +651,15 @@ class TestLaplacianEigenmaps:
         n_points = 64
         features = np.zeros((n_points, 3 + n_eigs), dtype=np.float32)
         features[:n_actual, :3] = pts_cc.astype(np.float32)
-        features[:n_actual, 3:3 + k] = eigenvectors.astype(np.float32)
+        features[:n_actual, 3 : 3 + k] = eigenvectors.astype(np.float32)
 
         # For each valid node i, features[i, 3:3+k] should be the i-th row of eigenvectors
         for i in range(n_actual):
             for j in range(k):
-                assert abs(features[i, 3 + j] - eigenvectors[i, j]) < 1e-6, \
-                    f"Node {i}, eigvec {j}: feature={features[i, 3+j]}, expected={eigenvectors[i, j]}"
+                assert abs(features[i, 3 + j] - eigenvectors[i, j]) < 1e-6, (
+                    f"Node {i}, eigvec {j}: "
+                    f"feature={features[i, 3 + j]}, expected={eigenvectors[i, j]}"
+                )
 
     def test_compute_eigenpairs_excludes_trivial_eigenvector(self):
         """compute_eigenpairs should exclude the trivial constant eigenvector.
@@ -666,18 +677,19 @@ class TestLaplacianEigenmaps:
         eigenvalues, eigenvectors = compute_eigenpairs(L, n_eigs=5)
 
         # The first eigenvalue should be the Fiedler value (> 0), NOT ~0
-        assert eigenvalues[0] > 0.01, \
+        assert eigenvalues[0] > 0.01, (
             f"First eigenvalue should be Fiedler value (> 0), got {eigenvalues[0]}"
+        )
 
         # The first eigenvector should NOT be constant
         v0 = eigenvectors[:, 0]
         v0_std = np.std(v0)
-        assert v0_std > 0.01, \
-            f"First eigenvector should not be constant (std={v0_std})"
+        assert v0_std > 0.01, f"First eigenvector should not be constant (std={v0_std})"
 
         # Should have both positive and negative entries (Fiedler vector)
-        assert np.any(v0 > 0) and np.any(v0 < 0), \
+        assert np.any(v0 > 0) and np.any(v0 < 0), (
             "First eigenvector should be the Fiedler vector with both signs"
+        )
 
         # Should return exactly n_eigs eigenvectors
         assert len(eigenvalues) == 5
@@ -695,13 +707,13 @@ class TestLaplacianEigenmaps:
         eigenvalues, eigenvectors = compute_eigenpairs(L, n_eigs=5)
 
         # First returned eigenvalue is the Fiedler value (> 0)
-        assert eigenvalues[0] > 1e-6, \
-            f"Fiedler value should be > 0, got {eigenvalues[0]}"
+        assert eigenvalues[0] > 1e-6, f"Fiedler value should be > 0, got {eigenvalues[0]}"
 
         # Fiedler vector should have both signs (graph partitioning)
         v_fiedler = eigenvectors[:, 0]
-        assert np.any(v_fiedler > 0) and np.any(v_fiedler < 0), \
+        assert np.any(v_fiedler > 0) and np.any(v_fiedler < 0), (
             "Fiedler vector should have both positive and negative entries"
+        )
 
     def test_all_returned_eigenvalues_positive(self):
         """All returned eigenvalues should be > 0 (trivial excluded)."""
@@ -713,5 +725,6 @@ class TestLaplacianEigenmaps:
         L, _ = build_graph_laplacian(points, n_neighbors=10)
         eigenvalues, _ = compute_eigenpairs(L, n_eigs=5)
 
-        assert np.all(eigenvalues > 1e-6), \
+        assert np.all(eigenvalues > 1e-6), (
             f"All eigenvalues should be > 0 after excluding trivial, got {eigenvalues}"
+        )

@@ -88,12 +88,12 @@ class TestCanonicalizeRandomFixed:
         np.testing.assert_array_equal(r1, r2)
 
     def test_different_idx_different_result(self):
-        """Different sample_idx can give different results."""
+        """Different sample_idx gives different results for this input."""
         V = np.random.default_rng(10).standard_normal((5, 3))
         r1 = canonicalize_random_fixed(V, sample_idx=0)
-        r2 = canonicalize_random_fixed(V, sample_idx=1)
-        # With high probability, at least one column differs
-        assert not np.array_equal(r1, r2) or True  # non-deterministic test, just run
+        r2 = canonicalize_random_fixed(V, sample_idx=2)
+        # For this specific input, the two seeds produce different sign patterns
+        assert not np.array_equal(r1, r2)
 
     def test_only_sign_changes(self):
         """Output columns differ from input by at most a sign flip."""

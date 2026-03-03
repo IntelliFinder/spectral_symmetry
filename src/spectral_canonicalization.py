@@ -803,6 +803,10 @@ def _oap_canonicalize_eigenspace(U):
                     c = e_k
                     norm_c = np.linalg.norm(c)
                     break
+        if norm_c < 1e-12:
+            # All directions exhausted; use raw direction as-is
+            c = raw_c.copy()
+            norm_c = max(np.linalg.norm(c), 1e-12)
         c /= norm_c
 
         # Convert to n-dimensional space
