@@ -196,15 +196,17 @@ class DistanceTransformerClassifier(nn.Module):
     ):
         super().__init__()
         self.input_proj = nn.Linear(input_dim, d_model)
-        self.layers = nn.ModuleList([
-            DistanceAttentionLayer(
-                d_model=d_model,
-                nhead=nhead,
-                dim_feedforward=dim_feedforward,
-                dropout=dropout,
-            )
-            for _ in range(num_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                DistanceAttentionLayer(
+                    d_model=d_model,
+                    nhead=nhead,
+                    dim_feedforward=dim_feedforward,
+                    dropout=dropout,
+                )
+                for _ in range(num_layers)
+            ]
+        )
         self.classifier = nn.Linear(d_model, n_classes)
 
     def forward(self, x, dist_matrix, mask=None):
@@ -254,8 +256,9 @@ class SpectralDistanceAttentionLayer(nn.Module):
     dropout : float
     """
 
-    def __init__(self, d_model=128, nhead=8, dim_feedforward=256,
-                 n_spectral_channels=16, dropout=0.1):
+    def __init__(
+        self, d_model=128, nhead=8, dim_feedforward=256, n_spectral_channels=16, dropout=0.1
+    ):
         super().__init__()
         assert d_model % nhead == 0, "d_model must be divisible by nhead"
         self.d_model = d_model
@@ -361,16 +364,18 @@ class SpectralDistanceTransformerClassifier(nn.Module):
     ):
         super().__init__()
         self.input_proj = nn.Linear(input_dim, d_model)
-        self.layers = nn.ModuleList([
-            SpectralDistanceAttentionLayer(
-                d_model=d_model,
-                nhead=nhead,
-                dim_feedforward=dim_feedforward,
-                n_spectral_channels=n_spectral_channels,
-                dropout=dropout,
-            )
-            for _ in range(num_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                SpectralDistanceAttentionLayer(
+                    d_model=d_model,
+                    nhead=nhead,
+                    dim_feedforward=dim_feedforward,
+                    n_spectral_channels=n_spectral_channels,
+                    dropout=dropout,
+                )
+                for _ in range(num_layers)
+            ]
+        )
         self.classifier = nn.Linear(d_model, n_classes)
 
     def forward(self, x, dist_matrix, spectral_dists, mask=None):

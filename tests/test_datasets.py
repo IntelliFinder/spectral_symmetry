@@ -31,7 +31,7 @@ class TestSymmetriaDataset:
 class TestOFFParser:
     def test_parse_off(self):
         """Parse a minimal OFF file."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.off', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".off", delete=False) as f:
             f.write("OFF\n3 0 0\n0.0 0.0 0.0\n1.0 0.0 0.0\n0.0 1.0 0.0\n")
             f.flush()
             pts = _parse_off(f.name)
@@ -41,7 +41,7 @@ class TestOFFParser:
 
     def test_parse_off_compact_header(self):
         """Parse OFF file with counts on the header line."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.off', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".off", delete=False) as f:
             f.write("OFF3 0 0\n0.0 0.0 0.0\n1.0 0.0 0.0\n0.0 1.0 0.0\n")
             f.flush()
             pts = _parse_off(f.name)
@@ -57,8 +57,8 @@ class TestPLYParser:
             "property float x\nproperty float y\nproperty float z\n"
             "end_header\n0.0 0.0 0.0\n1.0 0.0 0.0\n0.0 1.0 0.0\n"
         )
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.ply', delete=False) as f:
-            f.write(content.encode('ascii'))
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".ply", delete=False) as f:
+            f.write(content.encode("ascii"))
             f.flush()
             pts = _parse_ply(f.name)
         assert pts.shape == (3, 3)

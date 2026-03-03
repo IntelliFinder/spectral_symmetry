@@ -20,8 +20,7 @@ class DirectoryDataset(PointCloudDataset):
 
     def __iter__(self):
         files = sorted(
-            p for p in self.root_dir.rglob('*')
-            if p.suffix.lower() in self.SUPPORTED_EXTENSIONS
+            p for p in self.root_dir.rglob("*") if p.suffix.lower() in self.SUPPORTED_EXTENSIONS
         )
         for fpath in files:
             try:

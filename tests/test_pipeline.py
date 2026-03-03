@@ -17,7 +17,7 @@ class TestPipeline:
         results = []
         for name, pts in ds:
             result = analyze_spectrum(pts, n_eigs=10, n_neighbors=5)
-            result['name'] = name
+            result["name"] = name
             results.append(result)
 
         # Should have 5 shapes (1 instance × 1 noise level × 5 types)

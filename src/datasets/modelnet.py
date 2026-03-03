@@ -59,15 +59,13 @@ class ModelNetDataset(PointCloudDataset):
         print(f"Downloading ModelNet{self.variant} from {url} ...")
         urllib.request.urlretrieve(url, zip_path)
         print(f"Extracting to {self.root_dir / 'raw'} ...")
-        with zipfile.ZipFile(zip_path, 'r') as zf:
+        with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(self.root_dir / "raw")
         os.remove(zip_path)
         print("Done.")
 
     def __iter__(self):
-        class_dirs = sorted(
-            p for p in self.data_dir.iterdir() if p.is_dir()
-        )
+        class_dirs = sorted(p for p in self.data_dir.iterdir() if p.is_dir())
         for class_dir in class_dirs:
             split_dir = class_dir / self.split
             if not split_dir.is_dir():
@@ -94,7 +92,11 @@ class ModelNet10Dataset(ModelNetDataset):
 
     def __init__(self, root_dir, split="train", max_points=2048, download=False):
         super().__init__(
-            root_dir, variant=10, split=split, max_points=max_points, download=download,
+            root_dir,
+            variant=10,
+            split=split,
+            max_points=max_points,
+            download=download,
         )
 
 
@@ -103,5 +105,9 @@ class ModelNet40Dataset(ModelNetDataset):
 
     def __init__(self, root_dir, split="train", max_points=2048, download=False):
         super().__init__(
-            root_dir, variant=40, split=split, max_points=max_points, download=download,
+            root_dir,
+            variant=40,
+            split=split,
+            max_points=max_points,
+            download=download,
         )

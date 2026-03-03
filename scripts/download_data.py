@@ -34,21 +34,24 @@ def download_symmetry3d():
 
 def main():
     parser = argparse.ArgumentParser(description="Download datasets")
-    parser.add_argument('--datasets', nargs='+', default=['modelnet10'],
-                        choices=['modelnet10', 'modelnet40', 'symmetry3d'],
-                        help='Datasets to download')
-    parser.add_argument('--data-dir', type=str, default='data',
-                        help='Root data directory')
+    parser.add_argument(
+        "--datasets",
+        nargs="+",
+        default=["modelnet10"],
+        choices=["modelnet10", "modelnet40", "symmetry3d"],
+        help="Datasets to download",
+    )
+    parser.add_argument("--data-dir", type=str, default="data", help="Root data directory")
     args = parser.parse_args()
 
     for ds in args.datasets:
-        if ds == 'modelnet10':
+        if ds == "modelnet10":
             download_modelnet(10, args.data_dir)
-        elif ds == 'modelnet40':
+        elif ds == "modelnet40":
             download_modelnet(40, args.data_dir)
-        elif ds == 'symmetry3d':
+        elif ds == "symmetry3d":
             download_symmetry3d()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

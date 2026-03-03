@@ -8,6 +8,7 @@ from .base import PointCloudDataset
 # Procedural shape generators
 # ---------------------------------------------------------------------------
 
+
 def _generate_human(n_points, rng):
     """Bilateral-symmetric humanoid figure from stacked ellipsoids."""
     parts = []
@@ -108,11 +109,11 @@ def _generate_vase(n_points, rng):
 
 
 _GENERATORS = {
-    'human': _generate_human,
-    'airplane': _generate_airplane,
-    'chair': _generate_chair,
-    'table': _generate_table,
-    'vase': _generate_vase,
+    "human": _generate_human,
+    "airplane": _generate_airplane,
+    "chair": _generate_chair,
+    "table": _generate_table,
+    "vase": _generate_vase,
 }
 
 

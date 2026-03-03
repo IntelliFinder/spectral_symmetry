@@ -199,18 +199,16 @@ def plot_convergence_per_hdim(logs, output_dir):
 
 def benchmark_preprocessing(output_dir, n_graphs=200):
     """Benchmark preprocessing time per canonicalization method."""
+    from scipy.sparse import coo_matrix, diags
     from scipy.sparse.linalg import eigsh
 
     from src.spectral_canonicalization import (
-        canonicalize,
         canonicalize_maxabs,
         canonicalize_random_fixed,
         spectral_canonicalize,
         spectral_canonicalize_map,
         spectral_canonicalize_oap,
     )
-
-    from scipy.sparse import coo_matrix, diags
 
     n_eigs = 8
 
@@ -380,7 +378,7 @@ def benchmark_preprocessing(output_dir, n_graphs=200):
     ax.grid(True, alpha=0.3, axis="y")
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "preprocessing_timing.pdf"), dpi=150)
-    print(f"  Saved preprocessing_timing.pdf")
+    print("  Saved preprocessing_timing.pdf")
     plt.close(fig)
 
 

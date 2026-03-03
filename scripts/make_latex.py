@@ -12,67 +12,75 @@ import numpy as np
 # Ensure project root is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.spectral_core import uncanonicalizability_threshold
 from visualization.plotting import generate_representative_figures
 
 
 def compute_per_shape_stats(output_dir):
     """Read CSV and compute per-shape-type statistics."""
     rows = []
-    with open(Path(output_dir) / 'detailed_results.csv') as f:
+    with open(Path(output_dir) / "detailed_results.csv") as f:
         for row in csv.DictReader(f):
             rows.append(row)
 
-    by_shape = defaultdict(lambda: {
-        'fiedler_uncanon': 0, 'total': 0, 'uncanon_counts': [],
-        'spectral_gaps': [], 'min_score': 1e9, 'fiedler_scores': [],
-        'uncanon_raw_counts': [], 'repeating_eig_counts': [],
-        'non_repeating_eig_counts': [],
-    })
+    by_shape = defaultdict(
+        lambda: {
+            "fiedler_uncanon": 0,
+            "total": 0,
+            "uncanon_counts": [],
+            "spectral_gaps": [],
+            "min_score": 1e9,
+            "fiedler_scores": [],
+            "uncanon_raw_counts": [],
+            "repeating_eig_counts": [],
+            "non_repeating_eig_counts": [],
+        }
+    )
 
     for r in rows:
-        shape = r['shape'].split('/')[1]
-        idx = int(r['eig_index'])
-        score = float(r['uncanon_score'])
-        uncanon = r['is_uncanonicalizable'] == 'True'
-        uncanon_raw = r.get('is_uncanonicalizable_raw', r['is_uncanonicalizable']) == 'True'
-        multiplicity = int(r.get('multiplicity', '1'))
+        shape = r["shape"].split("/")[1]
+        idx = int(r["eig_index"])
+        score = float(r["uncanon_score"])
+        uncanon = r["is_uncanonicalizable"] == "True"
+        uncanon_raw = r.get("is_uncanonicalizable_raw", r["is_uncanonicalizable"]) == "True"
+        multiplicity = int(r.get("multiplicity", "1"))
 
         if idx == 0:
-            by_shape[shape]['total'] += 1
-            by_shape[shape]['uncanon_counts'].append(0)
-            by_shape[shape]['uncanon_raw_counts'].append(0)
-            by_shape[shape]['spectral_gaps'].append(float(r['spectral_gap']))
-            by_shape[shape]['repeating_eig_counts'].append(0)
-            by_shape[shape]['non_repeating_eig_counts'].append(0)
+            by_shape[shape]["total"] += 1
+            by_shape[shape]["uncanon_counts"].append(0)
+            by_shape[shape]["uncanon_raw_counts"].append(0)
+            by_shape[shape]["spectral_gaps"].append(float(r["spectral_gap"]))
+            by_shape[shape]["repeating_eig_counts"].append(0)
+            by_shape[shape]["non_repeating_eig_counts"].append(0)
         if idx > 0:
-            if score < by_shape[shape]['min_score']:
-                by_shape[shape]['min_score'] = score
+            if score < by_shape[shape]["min_score"]:
+                by_shape[shape]["min_score"] = score
             if uncanon:
-                by_shape[shape]['uncanon_counts'][-1] += 1
+                by_shape[shape]["uncanon_counts"][-1] += 1
             if uncanon_raw:
-                by_shape[shape]['uncanon_raw_counts'][-1] += 1
+                by_shape[shape]["uncanon_raw_counts"][-1] += 1
         # Track multiplicity per instance
         if multiplicity > 1:
-            by_shape[shape]['repeating_eig_counts'][-1] += 1
+            by_shape[shape]["repeating_eig_counts"][-1] += 1
         else:
-            by_shape[shape]['non_repeating_eig_counts'][-1] += 1
+            by_shape[shape]["non_repeating_eig_counts"][-1] += 1
         if idx == 1:
-            by_shape[shape]['fiedler_scores'].append(score)
+            by_shape[shape]["fiedler_scores"].append(score)
             if uncanon:
-                by_shape[shape]['fiedler_uncanon'] += 1
+                by_shape[shape]["fiedler_uncanon"] += 1
 
     return by_shape
 
 
 def write_latex(by_shape, output_dir, n_points=896):
-    threshold = 5.0 / np.sqrt(n_points)
-    shape_order = ['vase', 'human', 'table', 'chair', 'airplane']
+    threshold = uncanonicalizability_threshold(n_points)
+    shape_order = ["vase", "human", "table", "chair", "airplane"]
     symmetry_type = {
-        'vase': 'Rotational ($C_\\infty$)',
-        'human': 'Bilateral ($C_s$)',
-        'table': 'Four-fold ($C_{4v}$)',
-        'chair': 'Bilateral ($C_s$)',
-        'airplane': 'Bilateral ($C_s$)',
+        "vase": "Rotational ($C_\\infty$)",
+        "human": "Bilateral ($C_s$)",
+        "table": "Four-fold ($C_{4v}$)",
+        "chair": "Bilateral ($C_s$)",
+        "airplane": "Bilateral ($C_s$)",
     }
 
     latex = r"""\documentclass[11pt]{article}
@@ -134,28 +142,32 @@ Shape & Symmetry & Shapes & \makecell{Fiedler\\Uncanon.} & \makecell{Avg Uncanon
 
     for shape in shape_order:
         d = by_shape[shape]
-        n = d['total']
-        fiedler_rate = d['fiedler_uncanon'] / n * 100
-        avg_uncanon = np.mean(d['uncanon_counts'])
-        gap = np.mean(d['spectral_gaps'])
-        min_s = d['min_score']
+        n = d["total"]
+        fiedler_rate = d["fiedler_uncanon"] / n * 100
+        avg_uncanon = np.mean(d["uncanon_counts"])
+        gap = np.mean(d["spectral_gaps"])
+        min_s = d["min_score"]
         sym = symmetry_type[shape]
 
-        latex += (f"{shape.capitalize()} & {sym} & {n} & "
-                  f"{fiedler_rate:.1f}\\% & {avg_uncanon:.1f} & "
-                  f"{gap:.4f} & {min_s:.4f} \\\\\n")
+        latex += (
+            f"{shape.capitalize()} & {sym} & {n} & "
+            f"{fiedler_rate:.1f}\\% & {avg_uncanon:.1f} & "
+            f"{gap:.4f} & {min_s:.4f} \\\\\n"
+        )
 
     # Totals
-    total_shapes = sum(by_shape[s]['total'] for s in shape_order)
-    total_fiedler = sum(by_shape[s]['fiedler_uncanon'] for s in shape_order)
-    all_uncanon = [c for s in shape_order for c in by_shape[s]['uncanon_counts']]
-    all_gaps = [g for s in shape_order for g in by_shape[s]['spectral_gaps']]
+    total_shapes = sum(by_shape[s]["total"] for s in shape_order)
+    total_fiedler = sum(by_shape[s]["fiedler_uncanon"] for s in shape_order)
+    all_uncanon = [c for s in shape_order for c in by_shape[s]["uncanon_counts"]]
+    all_gaps = [g for s in shape_order for g in by_shape[s]["spectral_gaps"]]
 
     latex += r"""\midrule
 """
-    latex += (f"\\textbf{{All}} & --- & {total_shapes} & "
-              f"{total_fiedler / total_shapes * 100:.1f}\\% & {np.mean(all_uncanon):.1f} & "
-              f"{np.mean(all_gaps):.4f} & --- \\\\\n")
+    latex += (
+        f"\\textbf{{All}} & --- & {total_shapes} & "
+        f"{total_fiedler / total_shapes * 100:.1f}\\% & {np.mean(all_uncanon):.1f} & "
+        f"{np.mean(all_gaps):.4f} & --- \\\\\n"
+    )
 
     latex += r"""\bottomrule
 \end{tabular}
@@ -178,23 +190,27 @@ Shape & Shapes & \makecell{Avg Repeating\\Eigs} & \makecell{Avg Non-Repeating\\E
 
     for shape in shape_order:
         d = by_shape[shape]
-        n = d['total']
-        avg_rep = np.mean(d['repeating_eig_counts'])
-        avg_nonrep = np.mean(d['non_repeating_eig_counts'])
-        avg_raw = np.mean(d['uncanon_raw_counts'])
-        avg_corr = np.mean(d['uncanon_counts'])
-        latex += (f"{shape.capitalize()} & {n} & {avg_rep:.1f} & {avg_nonrep:.1f} & "
-                  f"{avg_raw:.1f} & {avg_corr:.1f} \\\\\n")
+        n = d["total"]
+        avg_rep = np.mean(d["repeating_eig_counts"])
+        avg_nonrep = np.mean(d["non_repeating_eig_counts"])
+        avg_raw = np.mean(d["uncanon_raw_counts"])
+        avg_corr = np.mean(d["uncanon_counts"])
+        latex += (
+            f"{shape.capitalize()} & {n} & {avg_rep:.1f} & {avg_nonrep:.1f} & "
+            f"{avg_raw:.1f} & {avg_corr:.1f} \\\\\n"
+        )
 
-    all_rep = [c for s in shape_order for c in by_shape[s]['repeating_eig_counts']]
-    all_nonrep = [c for s in shape_order for c in by_shape[s]['non_repeating_eig_counts']]
-    all_raw = [c for s in shape_order for c in by_shape[s]['uncanon_raw_counts']]
+    all_rep = [c for s in shape_order for c in by_shape[s]["repeating_eig_counts"]]
+    all_nonrep = [c for s in shape_order for c in by_shape[s]["non_repeating_eig_counts"]]
+    all_raw = [c for s in shape_order for c in by_shape[s]["uncanon_raw_counts"]]
 
     latex += r"""\midrule
 """
-    latex += (f"\\textbf{{All}} & {total_shapes} & {np.mean(all_rep):.1f} & "
-              f"{np.mean(all_nonrep):.1f} & {np.mean(all_raw):.1f} & "
-              f"{np.mean(all_uncanon):.1f} \\\\\n")
+    latex += (
+        f"\\textbf{{All}} & {total_shapes} & {np.mean(all_rep):.1f} & "
+        f"{np.mean(all_nonrep):.1f} & {np.mean(all_raw):.1f} & "
+        f"{np.mean(all_uncanon):.1f} \\\\\n"
+    )
 
     latex += r"""\bottomrule
 \end{tabular}
@@ -214,11 +230,13 @@ Shape & Min & Median & Mean & Max & $< \tau$ \\
 """
     for shape in shape_order:
         d = by_shape[shape]
-        fs = d['fiedler_scores']
-        n = d['total']
-        latex += (f"{shape.capitalize()} & {np.min(fs):.4f} & {np.median(fs):.4f} & "
-                  f"{np.mean(fs):.4f} & {np.max(fs):.4f} & "
-                  f"{d['fiedler_uncanon']}/{n} \\\\\n")
+        fs = d["fiedler_scores"]
+        n = d["total"]
+        latex += (
+            f"{shape.capitalize()} & {np.min(fs):.4f} & {np.median(fs):.4f} & "
+            f"{np.mean(fs):.4f} & {np.max(fs):.4f} & "
+            f"{d['fiedler_uncanon']}/{n} \\\\\n"
+        )
 
     latex += r"""\bottomrule
 \end{tabular}
@@ -265,7 +283,7 @@ The threshold $\tau = 5/\sqrt{N}$ provides a principled cutoff: it is large enou
 """
 
     tex_path = Path(output_dir) / "spectral_symmetry_report.tex"
-    with open(tex_path, 'w') as f:
+    with open(tex_path, "w") as f:
         f.write(latex)
     print(f"  Saved {tex_path}")
     return tex_path
@@ -273,8 +291,12 @@ The threshold $\tau = 5/\sqrt{N}$ provides a principled cutoff: it is large enou
 
 def main():
     parser = argparse.ArgumentParser(description="Generate LaTeX report")
-    parser.add_argument('--output-dir', type=str, default='results',
-                        help='Directory with results CSV and for output')
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="results",
+        help="Directory with results CSV and for output",
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir
@@ -287,5 +309,5 @@ def main():
     print("Done.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -10,6 +10,7 @@ from .spectral_core import uncanonicalizability_score  # noqa: F401 — re-expor
 @dataclass
 class DatasetStatistics:
     """Aggregate statistics across a dataset."""
+
     dataset_name: str
     n_shapes: int = 0
     avg_uncanon_ratio: float = 0.0
@@ -43,18 +44,18 @@ def aggregate_results(results_list, dataset_name="unknown"):
     non_repeating_counts = []
 
     for r in results_list:
-        uncanon = r['uncanonicalizable']
+        uncanon = r["uncanonicalizable"]
         if len(uncanon) > 0:
             uncanon_ratios.append(sum(uncanon) / len(uncanon))
-        spectral_gaps.append(r['spectral_gap'])
+        spectral_gaps.append(r["spectral_gap"])
         # Fiedler vector is eigenvector index 1 (skip trivial constant eigenvector 0)
         if len(uncanon) > 1 and uncanon[1]:
             fiedler_uncanon_count += 1
         # Multiplicity stats
-        mult_info = r.get('multiplicity_info')
+        mult_info = r.get("multiplicity_info")
         if mult_info is not None:
-            repeating_counts.append(mult_info['n_repeating'])
-            non_repeating_counts.append(mult_info['n_non_repeating'])
+            repeating_counts.append(mult_info["n_repeating"])
+            non_repeating_counts.append(mult_info["n_non_repeating"])
 
     return DatasetStatistics(
         dataset_name=dataset_name,

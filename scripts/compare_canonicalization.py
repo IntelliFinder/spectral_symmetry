@@ -95,23 +95,47 @@ def main():
     # ── Load full datasets once (n_eigs=20) ──────────────────────────────────
     print(f"=== Loading ModelNet{VARIANT} datasets WITHOUT canonicalization (n_eigs={N_EIGS}) ===")
     train_no = SpectralModelNet(
-        DATA_DIR, split="train", n_points=N_POINTS, n_eigs=N_EIGS,
-        n_neighbors=N_NEIGHBORS, download=True, canonicalize=False, variant=VARIANT,
+        DATA_DIR,
+        split="train",
+        n_points=N_POINTS,
+        n_eigs=N_EIGS,
+        n_neighbors=N_NEIGHBORS,
+        download=True,
+        canonicalize=False,
+        variant=VARIANT,
     )
     test_no = SpectralModelNet(
-        DATA_DIR, split="test", n_points=N_POINTS, n_eigs=N_EIGS,
-        n_neighbors=N_NEIGHBORS, download=False, canonicalize=False, variant=VARIANT,
+        DATA_DIR,
+        split="test",
+        n_points=N_POINTS,
+        n_eigs=N_EIGS,
+        n_neighbors=N_NEIGHBORS,
+        download=False,
+        canonicalize=False,
+        variant=VARIANT,
     )
     print(f"  Train: {len(train_no)}, Test: {len(test_no)}\n")
 
     print(f"=== Loading ModelNet{VARIANT} datasets WITH canonicalization (n_eigs={N_EIGS}) ===")
     train_canon = SpectralModelNet(
-        DATA_DIR, split="train", n_points=N_POINTS, n_eigs=N_EIGS,
-        n_neighbors=N_NEIGHBORS, download=False, canonicalize=True, variant=VARIANT,
+        DATA_DIR,
+        split="train",
+        n_points=N_POINTS,
+        n_eigs=N_EIGS,
+        n_neighbors=N_NEIGHBORS,
+        download=False,
+        canonicalize=True,
+        variant=VARIANT,
     )
     test_canon = SpectralModelNet(
-        DATA_DIR, split="test", n_points=N_POINTS, n_eigs=N_EIGS,
-        n_neighbors=N_NEIGHBORS, download=False, canonicalize=True, variant=VARIANT,
+        DATA_DIR,
+        split="test",
+        n_points=N_POINTS,
+        n_eigs=N_EIGS,
+        n_neighbors=N_NEIGHBORS,
+        download=False,
+        canonicalize=True,
+        variant=VARIANT,
     )
     print(f"  Train: {len(train_canon)}, Test: {len(test_canon)}\n")
 
@@ -120,9 +144,9 @@ def main():
     # ── Sweep k ──────────────────────────────────────────────────────────────
     results = {}
     for k in K_VALUES:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  k = {k} eigenvectors (input_dim = {k})")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Truncated wrappers (eigenvectors only, no xyz)
         tr_no = TruncatedSpectralDataset(train_no, k=k, use_xyz=False)
@@ -131,20 +155,22 @@ def main():
         te_ca = TruncatedSpectralDataset(test_canon, k=k, use_xyz=False)
 
         print(f"\n--- k={k}, no-canon ---")
-        acc_no = run_training(tr_no, te_no, input_dim=k, n_classes=n_classes,
-                              label=f"k={k} no-canon", device=device)
+        acc_no = run_training(
+            tr_no, te_no, input_dim=k, n_classes=n_classes, label=f"k={k} no-canon", device=device
+        )
 
         print(f"\n--- k={k}, canon ---")
-        acc_ca = run_training(tr_ca, te_ca, input_dim=k, n_classes=n_classes,
-                              label=f"k={k} canon", device=device)
+        acc_ca = run_training(
+            tr_ca, te_ca, input_dim=k, n_classes=n_classes, label=f"k={k} canon", device=device
+        )
 
         results[k] = {"no_canon": acc_no, "canon": acc_ca}
         print(f"\n  k={k} => no-canon={acc_no:.4f}  canon={acc_ca:.4f}")
 
     # ── Summary table ────────────────────────────────────────────────────────
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("RESULTS SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"{'k':>4s}  {'No-Canon':>10s}  {'Canon':>10s}  {'Diff':>10s}")
     print("-" * 40)
     for k in K_VALUES:

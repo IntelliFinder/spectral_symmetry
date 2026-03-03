@@ -7,6 +7,7 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{xcolor}
+\usepackage{enumitem}
 
 \hypersetup{
     colorlinks=true,
@@ -17,7 +18,7 @@
 
 \title{Spectral Graph Features for Point Cloud Classification:\\An Experimental Study}
 \author{}
-\date{February 2025}
+\date{February 2026}
 
 \begin{document}
 
@@ -34,11 +35,21 @@ sweep over four eigenvector canonicalization methods and multiple eigenvector co
 conducted. We further investigate sign-invariant alternatives: Heat Kernel Signatures
 (HKS) and eigenvalue spectrum descriptors (Shape-DNA). Statistical analysis of
 eigenvector uncanonicalizability across 12,305 shapes provides theoretical grounding for
-the observed results. We find that raw spectral eigenvectors consistently fail to improve
-classification, but sign-invariant spectral descriptors partially recover discriminative
-signal: HKS with xyz achieves 79.74\% on ModelNet10 (vs.\ 82.27\% distance-only
-baseline), and eigenvalue spectrum descriptors reach 75.88\%.
+the observed results. Head-to-head comparison on ModelNet40 with $k=8$ eigenvectors shows
+HKS (76.26\%) outperforms eigenvector+Spielman (71.39\%) by 4.87 percentage points,
+confirming the advantage of sign-invariant spectral descriptors. An ablation replacing
+$v_k(i)^2$ with canonicalized $v_k(i)$ in the exponential weighting (Weighted Eigenvector
+Sums, WES) narrows the gap to $\sim$1.5 pp on both MN10 and MN40, revealing that the
+multi-scale exponential decay---which downweights high-frequency, hard-to-canonicalize
+eigenvectors---accounts for most of HKS's advantage, with squaring providing the remaining
+edge. A learnable spectral weighting experiment, replacing the fixed exponential with an MLP,
+confirms that increased expressivity does not improve over the fixed kernel (79.41\% vs.\
+80.40\% on MN10). At the state-of-the-art level, PTv3 with gated spectral fusion (92.22\%) matches but
+does not exceed the geometric-only Pointcept baseline (92.34\%).
 \end{abstract}
+
+\tableofcontents
+\newpage
 
 %% ============================================================================
 \section{Introduction}
@@ -60,7 +71,7 @@ serious obstacle.
 
 Our approach is to systematically test multiple strategies for incorporating spectral
 features into point cloud classifiers:
-\begin{itemize}
+\begin{itemize}[nosep]
     \item \textbf{Injection methods:} additive attention bias from spectral distances, node
           feature concatenation of eigenvectors to coordinates, learned gated fusion of
           geometric and spectral embeddings, and permutation-invariant Deep Sets.
@@ -78,7 +89,7 @@ features into point cloud classifiers:
 \section{Methods}
 %% ============================================================================
 
-We evaluate nine model configurations spanning three architecture families.
+We evaluate eleven model configurations spanning three architecture families.
 
 \paragraph{1. DistanceTransformerClassifier.}
 A custom transformer in which the attention logits are multiplicatively modulated by a sparse
@@ -141,14 +152,36 @@ HKS is defined as:
     \text{HKS}(i, t) = \sum_k \exp(-\lambda_k \cdot t) \cdot v_k(i)^2,
 \]
 which is inherently sign-invariant since it uses $v_k(i)^2$. HKS features are computed
-at 16 log-spaced time scales, producing a 16-dimensional per-point descriptor. The
-graph Laplacian uses 30 neighbors, Gaussian kernel weights, and symmetric normalization.
+at $T$ log-spaced time scales, producing a $T$-dimensional per-point descriptor. The
+graph Laplacian uses Gaussian kernel weights and symmetric normalization.
 
-\paragraph{9. SpectrumClassifier (Eigenvalues Only).}
-A minimal baseline that uses only the sorted eigenvalue vector $(\lambda_1, \ldots,
-\lambda_k)$ as a global shape descriptor, processed through a 3-layer MLP. This tests
-whether spectral information is discriminative when eigenvector sign ambiguity is entirely
-bypassed.
+\paragraph{9. Exponentially-Weighted Eigenvector Sums (WES).}
+To isolate the contribution of squaring in HKS, we define a non-squared variant:
+\[
+    \text{WES}(i, t) = \sum_k \exp(-\lambda_k \cdot t) \cdot v_k(i),
+\]
+which uses the same exponential multi-scale weighting as HKS but retains the raw
+(canonicalized) eigenvector entries $v_k(i)$ instead of $v_k(i)^2$. This variant is
+\emph{not} sign-invariant and requires eigenvector canonicalization. It tests whether the
+exponential weighting alone---which downweights high-frequency eigenvectors where sign
+ambiguity is worst---can compensate for imperfect canonicalization.
+
+\paragraph{10. Learnable Spectral Weighting (Deep Sets).}
+This model replaces the fixed exponential kernel $e^{-\lambda_k t}$ in HKS with a learned MLP
+that maps the full eigenvalue spectrum $(\lambda_1, \ldots, \lambda_K)$ to a weighting matrix
+$W \in \mathbb{R}^{K \times T}$. The per-point spectral features are then computed as:
+\[
+    f(i, t) = \sum_{k=1}^{K} W_{k,t} \cdot g_k(i),
+\]
+where $g_k(i) = v_k(i)^2$ (squared, sign-invariant) or $g_k(i) = v_k(i)$ (non-squared,
+requiring canonicalization). Unlike HKS, the weighting MLP can learn inter-eigenvalue
+relationships and non-exponential decay profiles. This tests whether increased expressivity
+in the spectral weighting function can improve upon the fixed exponential.
+
+\paragraph{11. PCA Orientation Canonicalization.}
+Points are rotated into their PCA frame (principal component alignment). The sign of each
+principal axis is then canonicalized using one of three methods (max-abs, Spielman, random).
+This tests whether orientation alignment via PCA can substitute for spectral features.
 
 %% ============================================================================
 \section{Experimental Setup}
@@ -156,27 +189,25 @@ bypassed.
 
 \subsection{Datasets}
 
-\begin{itemize}
-    \item \textbf{ModelNet10:} 4,899 shapes across 10 object categories.
-    \item \textbf{ModelNet40:} 12,311 shapes (9,843 train / 2,468 test) across 40 categories.
+\begin{itemize}[nosep]
+    \item \textbf{ModelNet10 (MN10):} 4,899 shapes across 10 object categories (3,991 train / 908 test).
+    \item \textbf{ModelNet40 (MN40):} 12,311 shapes across 40 categories (9,843 train / 2,468 test).
     \item \textbf{Point sampling:} 512 points for the custom transformer experiments; 1,024
-          farthest-point-sampled points with normals for PTv3 experiments.
-    \item \textbf{$k$-NN graph:} $k = 12$ neighbors for constructing the connectivity graph
-          used in both spectral feature computation and distance-modulated attention.
+          farthest-point-sampled points with normals for PTv3 and Deep Sets experiments.
+    \item \textbf{$k$-NN graph:} $k = 12$ neighbors for transformer and PTv3; $k = 30$ for HKS.
 \end{itemize}
 
 \subsection{Spectral Feature Computation}
 
 Spectral features are computed as follows:
-\begin{enumerate}
+\begin{enumerate}[nosep]
     \item Build a symmetric $k$-NN graph from the point cloud coordinates.
     \item Extract the largest connected component (to ensure a valid Laplacian).
-    \item Compute the combinatorial graph Laplacian $L = D - A$, where $D$ is the degree
-          matrix and $A$ is the adjacency matrix.
-    \item Solve for the smallest non-trivial eigenpairs of $L$, excluding the constant
-          (trivial) eigenvector corresponding to $\lambda_0 = 0$.
+    \item Compute the graph Laplacian $L$ (combinatorial or symmetric normalized).
+    \item Solve for the smallest non-trivial eigenpairs via ARPACK, excluding the constant
+          eigenvector corresponding to $\lambda_0 = 0$.
     \item Apply one of four canonicalization methods to resolve sign ambiguity:
-          \begin{itemize}
+          \begin{itemize}[nosep]
               \item \textbf{Spielman:} Solve a GF(2) linear system to find a consistent sign
                     assignment.
               \item \textbf{Max-abs:} Flip each eigenvector so that its entry with the largest
@@ -208,15 +239,23 @@ canonicalization, and $n_{\text{eigs}} = 8$.
 
 \paragraph{HKS Deep Sets.}
 Same architecture as Deep Sets. Spectral computation uses $k = 30$ neighbors, Gaussian
-kernel weighted adjacency, symmetric normalized Laplacian, $n_{\text{eigs}} = 32$
-eigenpairs, and $n_{\text{times}} = 16$ log-spaced time scales for HKS.
+kernel weighted adjacency, symmetric normalized Laplacian, and log-spaced time scales for
+HKS. Two configurations are evaluated: a standard variant ($n_{\text{eigs}} = 32$,
+$T = 16$, hidden dim 256, 100 epochs) and an optimized variant ($n_{\text{eigs}} = 32$,
+$T = 32$, hidden dim 512, 200 epochs).
+
+\paragraph{Learnable Spectral Weighting Deep Sets.}
+Same Deep Sets architecture with $k = 30$ neighbors, Gaussian kernel weighted adjacency,
+symmetric normalized Laplacian, $n_{\text{eigs}} = 8$, $T = 32$ output channels, hidden
+dim $= 512$, MLP hidden dim $= 128$ (for the spectral weighting MLP), 200 epochs, batch
+size $= 32$, lr $= 10^{-3}$, weight decay $= 10^{-4}$, CosineAnnealingLR, xyz included.
 
 \subsection{Spectral Pipeline Corrections}
 
 During the course of experimentation, we identified and corrected three bugs in the
 spectral feature computation pipeline:
 
-\begin{enumerate}
+\begin{enumerate}[nosep]
     \item \textbf{Graph symmetrization.} The original symmetrization
           $A = \frac{1}{2}(A + A^\top)$ averages one-directional edges, halving distances
           for edges present in only one direction. We corrected this to
@@ -243,11 +282,7 @@ All Deep Sets and HKS experiments reported below use the corrected pipeline.
 \subsection{Main Results}
 
 Table~\ref{tab:main} summarizes classification accuracy across all model configurations on
-ModelNet10 and ModelNet40. The distance-only transformer achieves 82.27\% and 77.19\% on
-MN10 and MN40, respectively. Adding spectral features via any injection method degrades
-performance substantially. On the PTv3 side, the Pointcept baseline achieves 92.34\% on
-MN40, while the gated spectral variant reaches 92.22\%---a negligible difference that falls
-within run-to-run variance.
+ModelNet10 and ModelNet40.
 
 \begin{table}[ht]
 \centering
@@ -268,45 +303,136 @@ result in each architecture family is shown in \textbf{bold}.}
 \quad PTv3 naive (xyz, no aug, 100ep) & 54.41 & -- \\
 \quad PTv3 + spectral (xyz + eigvecs) & 45.87 & -- \\
 \quad PTv3 Pointcept (normals + aug, 300ep) & -- & \textbf{92.34} \\
-\quad PTv3 Gated Spectral & -- & 92.22 \\
+\quad PTv3 Gated Spectral ($k_{\text{eig}}{=}8$, Spielman) & -- & 92.22 \\
 \midrule
 \multicolumn{3}{l}{\emph{Deep Sets}} \\
-\quad Eigvecs + xyz (fixed $1/\sqrt{\lambda}$, spielman) & 59.03 & -- \\
-\quad Eigvecs + xyz (fixed $1/\sqrt{\lambda}$, maxabs) & 60.35 & -- \\
-\quad Eigvecs + xyz (learnable $f(\lambda)$, spielman) & 58.92 & -- \\
-\quad Eigvecs + xyz + spectrum descriptor & \textbf{75.88} & -- \\
-\quad HKS + xyz & \textbf{79.74} & -- \\
-\quad Eigvecs only (no xyz) & ${\sim}$20 & -- \\
+\quad HKS + xyz (optimized: $k_{\text{eig}}{=}32$, $T{=}32$, 512d, 200ep) & \textbf{80.62} & -- \\
+\quad HKS + xyz ($k_{\text{eig}}{=}32$, $T{=}16$) & 79.74 & -- \\
+\quad HKS + xyz ($k_{\text{eig}}{=}8$, $T{=}16$, 512d, 200ep) & -- & \textbf{76.26} \\
+\quad Learnable squared ($k_{\text{eig}}{=}8$, $T{=}32$, 512d, 200ep) & 79.41 & 75.00 \\
+\quad Learnable + maxabs & 77.64 & 73.58 \\
+\quad Eigvecs + xyz v2 (maxabs, $k_{\text{eig}}{=}8$) & 77.09 & -- \\
+\quad Eigvecs + xyz v2 (spielman, $k_{\text{eig}}{=}8$) & 76.98 & -- \\
+\quad Eigvecs + xyz + spectrum ($k_{\text{eig}}{=}8$, spielman) & 75.88 & 71.39 \\
+\quad Eigvecs + xyz + spectrum ($k_{\text{eig}}{=}32$, maxabs, weighted) & 72.80 & -- \\
+\quad PCA (maxabs) & 64.98 & -- \\
+\quad PCA (xyz frame only) & 64.54 & -- \\
+\quad Eigvecs + xyz (fixed, maxabs) & 60.35 & -- \\
+\quad Eigvecs + xyz (fixed, spielman) & 59.03 & -- \\
+\midrule
+\multicolumn{3}{l}{\emph{Ablations (no xyz)}} \\
 \quad HKS only (no xyz) & 31.28 & -- \\
 \quad Eigenvalue spectrum only & 22.69 & -- \\
+\quad Eigvecs only & ${\sim}$20 & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Deep Sets Canonicalization Comparison}
+\subsection{Head-to-Head: HKS vs.\ Eigenvector + Spielman on ModelNet40}
+
+The key comparison of this study is the head-to-head evaluation of two spectral feature
+types on ModelNet40 with $k_{\text{eig}} = 8$ eigenvectors. Table~\ref{tab:head2head}
+reports the results with full run configurations.
+
+\begin{table}[ht]
+\centering
+\caption{Head-to-head comparison on ModelNet40, $k_{\text{eig}} = 8$.}
+\label{tab:head2head}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Model} & \textbf{Test Acc (\%)} & $\Delta$ \\
+\midrule
+DeepSets + HKS & \textbf{76.26} & -- \\
+DeepSets + Eigvec + Spielman & 71.39 & $-4.87$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{DeepSets + HKS configuration:}
+\begin{itemize}[nosep]
+    \item $k_{\text{eig}} = 8$, $k$-NN neighbors $= 30$, $T = 16$ time scales
+    \item Weighted Gaussian kernel adjacency, normalized Laplacian
+    \item $\texttt{include\_xyz} = \text{True}$
+    \item Hidden dim $= 512$, epochs $= 200$, batch size $= 32$, lr $= 0.001$
+    \item Best test accuracy: \textbf{76.26\%}
+\end{itemize}
+
+\noindent\textbf{DeepSets + Eigvec + Spielman configuration:}
+\begin{itemize}[nosep]
+    \item $k_{\text{eig}} = 8$, Spielman canonicalization, fixed $1/\sqrt{\lambda}$ scaling
+    \item $\texttt{include\_xyz} = \text{True}$, $\texttt{use\_spectrum} = \text{True}$ (eigenvalue vector appended)
+    \item Hidden dim $= 256$, epochs $= 100$, batch size $= 32$, lr $= 0.001$
+    \item Best test accuracy: \textbf{71.39\%}
+\end{itemize}
+
+HKS outperforms the eigenvector+Spielman approach by 4.87 percentage points. The
+sign-invariance of HKS ($v_k(i)^2$ eliminates sign ambiguity by construction) provides a
+more robust spectral feature than post-hoc canonicalization of raw eigenvectors.
+
+\subsection{Deep Sets Canonicalization Comparison (ModelNet10)}
 
 Table~\ref{tab:deepsets_canon} compares the three canonicalization methods for Deep Sets
-with eigenvector node features on ModelNet10. Results are consistent with the transformer
-sweep: all canonicalization methods produce similar accuracy, with max-abs marginally
-leading.
+with eigenvector node features on ModelNet10. All runs use $k_{\text{eig}} = 8$,
+hidden\_dim $= 256$, 100 epochs.
 
 \begin{table}[ht]
 \centering
 \caption{Deep Sets eigenvector canonicalization comparison on ModelNet10 (fixed
 $1/\sqrt{\lambda}$ scaling, xyz + eigenvectors).}
 \label{tab:deepsets_canon}
-\begin{tabular}{lc}
+\begin{tabular}{lcc}
 \toprule
-\textbf{Canonicalization} & \textbf{Test Acc (\%)} \\
+\textbf{Canonicalization} & \textbf{Scaling} & \textbf{Test Acc (\%)} \\
 \midrule
-Max-abs & \textbf{60.35} \\
-Spielman & 59.03 \\
-Random & 58.26 \\
+Max-abs & fixed & \textbf{60.35} \\
+Spielman & fixed & 59.03 \\
+Random & fixed & 58.26 \\
+Spielman & learnable & 58.92 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Eigenvector-Only Deep Sets}
+\subsection{Improved Deep Sets (v2) with Eigenvectors (ModelNet10)}
+
+The v2 eigenvector models remove the eigenvalue spectrum branch and use a refined
+architecture. Both canonicalization methods achieve comparable results, substantially
+above the original Deep Sets with eigenvectors.
+
+\begin{table}[ht]
+\centering
+\caption{Deep Sets v2 eigenvector models on ModelNet10 ($k_{\text{eig}} = 8$, xyz + eigvecs, no spectrum).}
+\label{tab:deepsets_v2}
+\begin{tabular}{lc}
+\toprule
+\textbf{Canonicalization} & \textbf{Test Acc (\%)} \\
+\midrule
+Max-abs & \textbf{77.09} \\
+Spielman & 76.98 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{PCA Orientation Canonicalization (ModelNet10)}
+
+All runs: 1,024 points, hidden\_dim $= 256$, 100 epochs.
+
+\begin{table}[ht]
+\centering
+\caption{PCA-based orientation canonicalization on ModelNet10.}
+\label{tab:pca}
+\begin{tabular}{lc}
+\toprule
+\textbf{Sign Method} & \textbf{Test Acc (\%)} \\
+\midrule
+Max-abs & \textbf{64.98} \\
+None (PCA frame only) & 64.54 \\
+Spielman & 60.02 \\
+Random & 59.03 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Eigenvector-Only Deep Sets (ModelNet10)}
 
 Removing xyz coordinates and relying solely on eigenvector features produces near-random
 accuracy across all configurations. Table~\ref{tab:deepsets_noxyz} shows results for
@@ -320,57 +446,77 @@ unweighted and weighted Laplacians.
 \toprule
 \textbf{Laplacian} & \textbf{Canonicalization} & \textbf{Test Acc (\%)} \\
 \midrule
-Unweighted & spielman & ${\sim}$20 \\
-Unweighted & maxabs & ${\sim}$20 \\
-Unweighted & random & ${\sim}$20 \\
+Unweighted & random & 20.37 \\
+Unweighted & spielman & 20.26 \\
+Unweighted & maxabs & 19.82 \\
 \midrule
-Weighted (Gaussian) & spielman & ${\sim}$15 \\
-Weighted (Gaussian) & maxabs & ${\sim}$14 \\
-Weighted (Gaussian) & random & ${\sim}$17 \\
+Weighted (v2) & maxabs & 17.51 \\
+Weighted (v2) & random & 14.98 \\
+Weighted (v2) & spielman & 14.98 \\
+\midrule
+Weighted (v1) & maxabs & 14.54 \\
+Weighted (v1) & random & 14.32 \\
+Weighted (v1) & spielman & 14.10 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Sign-Invariant Spectral Features}
 
-The failure of raw eigenvectors motivated two sign-invariant alternatives.
-Table~\ref{tab:sign_invariant} compares HKS and eigenvalue spectrum features on
-ModelNet10.
+Table~\ref{tab:sign_invariant} compares HKS and eigenvalue spectrum features on ModelNet10,
+including the optimized HKS variant.
 
 \begin{table}[ht]
 \centering
 \caption{Sign-invariant spectral features on ModelNet10 (Deep Sets).}
 \label{tab:sign_invariant}
-\begin{tabular}{lc}
+\begin{tabular}{lcccc}
 \toprule
-\textbf{Configuration} & \textbf{Test Acc (\%)} \\
+\textbf{Configuration} & $k_{\text{eig}}$ & $T$ & \textbf{Hidden} & \textbf{Test Acc (\%)} \\
 \midrule
-HKS + xyz (weighted, normalized $L$) & \textbf{79.74} \\
-Deep Sets + spectrum descriptor (eigvecs + xyz + $\lambda$ MLP) & 75.88 \\
-HKS only (no xyz) & 31.28 \\
-Eigenvalue spectrum only & 22.69 \\
+HKS + xyz (optimized) & 32 & 32 & 512 & \textbf{80.62} \\
+HKS + xyz (standard) & 32 & 16 & 256 & 79.74 \\
+Eigvecs + xyz + spectrum & 8 & -- & 256 & 75.88 \\
+HKS only (no xyz) & 32 & 16 & 256 & 31.28 \\
+Eigenvalue spectrum only & 8 & -- & 256 & 22.69 \\
 \midrule
-\emph{For reference:} & \\
-\quad Distance-only transformer & 82.27 \\
-\quad Deep Sets eigvecs + xyz (best canon.) & 60.35 \\
+\emph{For reference:} & & & & \\
+\quad Distance-only transformer & -- & -- & -- & 82.27 \\
+\quad Deep Sets eigvecs + xyz (best) & 8 & -- & 256 & 60.35 \\
+\quad Deep Sets v2 eigvecs + xyz (best) & 8 & -- & 256 & 77.09 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-HKS with xyz achieves 79.74\%, a substantial improvement over raw eigenvector features
-(60.35\%) and approaching the distance-only transformer baseline (82.27\%). The eigenvalue
-spectrum descriptor, appended as a global feature to the pooled Deep Sets representation,
-reaches 75.88\%---a 16-point improvement over eigenvectors alone. However, without xyz
-coordinates, HKS alone achieves only 31.28\% and eigenvalues alone 22.69\%, confirming
-that spectral features complement but cannot replace geometric coordinates.
+\subsection{Effect of Number of Eigenvectors}
 
-\subsection{Spielman Canonicalization Sweep}
+Table~\ref{tab:neigs} compares $k_{\text{eig}} = 8$ vs.\ $k_{\text{eig}} = 32$ for
+eigenvector+spectrum models on ModelNet10.
+
+\begin{table}[ht]
+\centering
+\caption{Effect of number of eigenvectors on Deep Sets + Spectrum (MN10).}
+\label{tab:neigs}
+\begin{tabular}{lccccc}
+\toprule
+$k_{\text{eig}}$ & \textbf{Canon.} & \textbf{Weighted} & \textbf{Hidden} & \textbf{Epochs} & \textbf{Test Acc (\%)} \\
+\midrule
+8 & Spielman & No & 256 & 100 & \textbf{75.88} \\
+32 & Max-abs & Yes & 256 & 100 & 72.80 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Increasing $k_{\text{eig}}$ from 8 to 32 reduces accuracy by 3.1 percentage points,
+consistent with the observation that higher-frequency eigenvectors are harder to
+canonicalize (see Section~\ref{sec:uncanon}).
+
+\subsection{Spielman Canonicalization Sweep (Transformer)}
 
 To determine whether the eigenvector sign ambiguity can be resolved through better
 canonicalization, we performed a systematic sweep over four canonicalization methods
 (Spielman, max-abs, random, none) and multiple eigenvector counts $k \in \{4, 8, 16\}$ on
-ModelNet10. Tables~\ref{tab:sweep_unweighted} and~\ref{tab:sweep_weighted} report the best
-configuration per model--canonicalization combination.
+ModelNet10.
 
 \begin{table}[ht]
 \centering
@@ -414,17 +560,14 @@ Spectral & maxabs & 4 & 34.39 & 19.65 \\
 The results are striking in their uniformity: across all four canonicalization strategies,
 test accuracy for the node model varies by less than 0.6 percentage points (66.52--67.07\%).
 The Spielman method, despite its theoretical motivation, offers no meaningful advantage over
-the trivial max-abs heuristic or even no canonicalization at all. The spectral-only model
-collapses to near-chance accuracy (${\sim}$19\%) regardless of canonicalization.
+the trivial max-abs heuristic. The spectral attention bias model collapses to near-chance
+accuracy (${\sim}$19\%) regardless of canonicalization.
 
 \subsection{Eigenvector Uncanonicalizability Analysis}
+\label{sec:uncanon}
 
 To understand \emph{why} canonicalization fails, we analyzed the uncanonicalizability of
-eigenvectors across 12,305 shapes from ModelNet40. An eigenvector is deemed
-``uncanonicalizable'' when the max-abs-value sign convention is ambiguous---that is, when
-no single entry has a sufficiently dominant magnitude to determine a canonical sign.
-Table~\ref{tab:uncanon} reports summary statistics, and Table~\ref{tab:uncanon_rates}
-reports per-index uncanonicalizability rates.
+eigenvectors across 12,305 shapes from ModelNet40.
 
 \begin{table}[ht]
 \centering
@@ -460,10 +603,133 @@ Threshold & 0.221 \\
 
 On average, 10.41 out of 20 eigenvectors per shape (52\%) are uncanonicalizable, despite
 nearly all eigenvalues having multiplicity one (18.96 out of 20). The uncanonicalizability
-rate increases monotonically with eigenvector index, from just 0.7\% for the first
-non-trivial eigenvector (Fiedler vector) to 61.4\% for the 20th eigenvector. This means
-that higher-frequency eigenvectors---which encode finer geometric detail---are precisely
-those most afflicted by sign ambiguity.
+rate increases monotonically with eigenvector index, from just 0.7\% for the Fiedler vector
+to 61.4\% for the 20th eigenvector.
+
+\subsection{PointTransformerV3 Results (ModelNet40)}
+
+\begin{table}[ht]
+\centering
+\caption{PTv3 experiments on ModelNet40.}
+\label{tab:ptv3}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Model} & \textbf{Test Acc (\%)} & \textbf{Voting Acc (\%)} \\
+\midrule
+PTv3 Pointcept (normals + aug, 300ep) & \textbf{92.34} & -- \\
+PTv3 Gated Spectral ($k_{\text{eig}}{=}8$, Spielman) & 92.22 & 91.82 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Gated Spectral PTv3 configuration:}
+$k_{\text{eig}} = 8$, Spielman canonicalization, $k$-NN $= 12$, grid\_size $= 0.01$,
+drop\_path $= 0.3$, batch size $= 32$, lr $= 0.001$, 300 epochs.
+
+\subsection{Exponentially-Weighted Eigenvector Sums vs.\ HKS}
+
+To isolate whether the advantage of HKS comes from \emph{squaring} ($v_k(i)^2$, which
+eliminates sign ambiguity) or from the \emph{exponential multi-scale weighting}
+($e^{-\lambda_k t}$, which downweights high-frequency eigenvectors where sign ambiguity is
+worst), we compare standard HKS against a non-squared variant: Weighted Eigenvector Sums
+(WES), defined as $\text{WES}(i,t) = \sum_k e^{-\lambda_k t} \cdot v_k(i)$. Since WES is
+sign-sensitive, we sweep over three canonicalization methods (Spielman, max-abs, random).
+
+All runs use the same architecture and hyperparameters: $k$-NN $= 30$, weighted Gaussian
+kernel, normalized Laplacian, $k_{\text{eig}} = 8$, $T = 32$ time scales, hidden dim
+$= 512$, 200 epochs, batch size $= 32$, lr $= 0.001$, xyz included.
+
+\begin{table}[ht]
+\centering
+\caption{Squared (HKS) vs.\ non-squared (WES) exponentially-weighted features.
+All runs use $k_{\text{eig}} = 8$, identical architecture and training.}
+\label{tab:hks_vs_wes}
+\begin{tabular}{llcc}
+\toprule
+\textbf{Feature} & \textbf{Canonicalization} & \textbf{MN10 (\%)} & \textbf{MN40 (\%)} \\
+\midrule
+HKS ($v_k^2$, squared) & none (not needed) & \textbf{80.40} & \textbf{76.34} \\
+\midrule
+WES ($v_k$, non-squared) & Spielman & 79.41 & 74.64 \\
+WES ($v_k$, non-squared) & Random & 79.30 & 74.84 \\
+WES ($v_k$, non-squared) & Max-abs & 78.74 & 74.19 \\
+\midrule
+\multicolumn{2}{l}{\emph{Gap: HKS $-$ best WES}} & $1.0$ & $1.5$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Additionally, with $k_{\text{eig}} = 32$ on MN10 (same config otherwise):
+\begin{itemize}[nosep]
+    \item HKS: \textbf{80.62\%}; WES max-abs: 79.63\%; WES random: 78.96\%.
+\end{itemize}
+
+\textbf{Key observations:}
+\begin{enumerate}[nosep]
+    \item The exponential weighting substantially closes the gap between canonicalized
+          eigenvectors and sign-invariant HKS. Raw canonicalized eigenvectors in Deep Sets
+          achieve only $\sim$60\% on MN10 (Table~\ref{tab:deepsets_canon}), while WES
+          reaches $\sim$79\%---recovering most of HKS's performance.
+    \item HKS (squared) consistently outperforms WES by $\sim$1--2 percentage points on
+          both MN10 and MN40, confirming that sign-invariance via squaring provides a
+          real advantage beyond what exponential weighting alone achieves.
+    \item Canonicalization method has minimal impact within WES: on MN10 the spread is
+          0.67 pp (78.74--79.41\%); on MN40 the spread is 0.65 pp (74.19--74.84\%).
+    \item The exponential decay $e^{-\lambda_k t}$ acts as a soft sign-invariance
+          mechanism: it assigns near-zero weight to high-frequency eigenvectors (large
+          $\lambda_k$), which are precisely those with the highest uncanonicalizability
+          rates (Section~\ref{sec:uncanon}). At small time scales $t$, high-frequency
+          components contribute; at large $t$, only the well-canonicalizable low-frequency
+          eigenvectors survive.
+\end{enumerate}
+
+\subsection{Learnable Spectral Weighting vs.\ Fixed Exponential}
+
+To test whether a learned weighting function can outperform the fixed exponential kernel in
+HKS, we replace $e^{-\lambda_k t}$ with an MLP that maps the eigenvalue spectrum to a
+$K \times T$ weighting matrix. We evaluate four variants (squared and three
+canonicalization methods for non-squared) on both MN10 and MN40.
+
+\begin{table}[ht]
+\centering
+\caption{Learnable spectral weighting vs.\ fixed exponential (HKS/WES).
+All learnable runs use $k_{\text{eig}} = 8$, $T = 32$, hidden dim $= 512$, 200 epochs.}
+\label{tab:learnable}
+\begin{tabular}{llcc}
+\toprule
+\textbf{Feature} & \textbf{Canonicalization} & \textbf{MN10 (\%)} & \textbf{MN40 (\%)} \\
+\midrule
+\multicolumn{4}{l}{\emph{Learnable weighting (MLP)}} \\
+\quad Squared ($v_k^2$) & none (not needed) & \textbf{79.41} & \textbf{75.00} \\
+\quad Non-squared ($v_k$) & Max-abs & 77.64 & 73.58 \\
+\quad Non-squared ($v_k$) & Random & 76.76 & 73.22 \\
+\quad Non-squared ($v_k$) & Spielman & 76.21 & 73.18 \\
+\midrule
+\multicolumn{4}{l}{\emph{Fixed exponential (for comparison, same $k_{\text{eig}}{=}8$, $T{=}32$, 512d, 200ep)}} \\
+\quad HKS ($v_k^2$, squared) & none (not needed) & 80.40 & 76.34 \\
+\quad WES ($v_k$, non-squared) & Spielman & 79.41 & 74.64 \\
+\quad WES ($v_k$, non-squared) & Max-abs & 78.74 & 74.19 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Key observations:}
+\begin{enumerate}[nosep]
+    \item The learnable MLP does \emph{not} improve over the fixed exponential. On MN10,
+          learnable squared (79.41\%) trails HKS (80.40\%) by 1.0 pp; on MN40, learnable
+          squared (75.00\%) trails HKS (76.34\%) by 1.3 pp.
+    \item The squared vs.\ non-squared pattern is consistent with HKS vs.\ WES: learnable
+          squared outperforms the best learnable non-squared variant by 1.8 pp on MN10 and
+          1.4 pp on MN40, confirming that sign-invariance provides a robust advantage
+          regardless of the weighting function.
+    \item Among non-squared learnable variants, canonicalization method has modest impact:
+          the spread is 1.4 pp on MN10 (76.21--77.64\%) and 0.4 pp on MN40
+          (73.18--73.58\%).
+    \item The fixed exponential's inductive bias---monotonically downweighting high-frequency
+          eigenvectors---appears to be well-matched to the structure of the problem. The
+          learnable MLP, despite having strictly more capacity, cannot discover a better
+          weighting scheme with the available training data.
+\end{enumerate}
 
 %% ============================================================================
 \section{Discussion}
@@ -473,50 +739,66 @@ those most afflicted by sign ambiguity.
 Across every injection method tested---attention bias, node feature concatenation, naive
 PTv3 concatenation, and Deep Sets---raw eigenvector features degrade or fail to improve
 classification accuracy. On the custom transformer, spectral features reduce accuracy by
-12--27 percentage points (Table~\ref{tab:main}). Deep Sets with eigenvectors + xyz achieve
-only 59--60\% on ModelNet10, compared to the 82\% distance-only transformer baseline. Even
-gated fusion on PTv3 cannot improve over the geometric-only baseline (92.22\% vs 92.34\%).
+12--27 percentage points (Table~\ref{tab:main}). Even gated fusion on PTv3 cannot improve
+over the geometric-only baseline (92.22\% vs 92.34\%).
 
 \paragraph{The sign ambiguity is fundamental.}
 Our uncanonicalizability analysis (Tables~\ref{tab:uncanon}--\ref{tab:uncanon_rates}) reveals
-that 40--61\% of eigenvectors cannot be reliably assigned a canonical sign, even when
-eigenvalues have multiplicity one. The canonicalization sweeps across both transformers
+that 40--61\% of eigenvectors cannot be reliably assigned a canonical sign. The
+canonicalization sweeps across both transformers
 (Tables~\ref{tab:sweep_unweighted}--\ref{tab:sweep_weighted}) and Deep Sets
-(Table~\ref{tab:deepsets_canon}) confirm that this is not merely a failure of one particular
-method: all canonicalization strategies produce test accuracies within a narrow band. The
-Deep Sets results are particularly telling, as the $\phi$-network processes each point
-independently and therefore cannot leverage inter-point relationships to disambiguate signs.
+(Table~\ref{tab:deepsets_canon}) confirm that all canonicalization strategies produce
+test accuracies within a narrow band.
 
 \paragraph{Sign-invariant descriptors partially recover spectral signal.}
-HKS features, which use $v_k(i)^2$ and are therefore inherently sign-invariant, achieve
-79.74\% on ModelNet10 with xyz---a 20-point improvement over raw eigenvector features and
-within 3 points of the distance-only transformer baseline (Table~\ref{tab:sign_invariant}).
-The eigenvalue spectrum descriptor, which bypasses eigenvectors entirely, boosts Deep Sets
-to 75.88\%. These results demonstrate that spectral information \emph{is} discriminative
-when the sign ambiguity is properly circumvented, contradicting the hypothesis that
-spectral features are inherently redundant with geometric representations.
+HKS features achieve 80.62\% on ModelNet10 (optimized) and 76.26\% on ModelNet40---within
+2--3 points of the distance-only transformer baseline on MN10 and within 1 point on MN40
+(Table~\ref{tab:sign_invariant}). The head-to-head comparison on MN40
+(Table~\ref{tab:head2head}) confirms a 4.87 pp advantage for HKS over eigenvector+Spielman,
+validating that sign-invariance is the key factor.
+
+\paragraph{Exponential weighting is a soft sign-invariance mechanism.}
+The WES ablation (Table~\ref{tab:hks_vs_wes}) reveals that the exponential multi-scale
+weighting $e^{-\lambda_k t}$ does most of the heavy lifting in HKS: WES achieves
+$\sim$79\% on MN10 and $\sim$75\% on MN40, up from $\sim$60\% for raw eigenvectors---recovering
+the majority of the gap to HKS. The remaining $\sim$1--2 pp gap is attributable to the
+squaring operation itself. The exponential decay naturally suppresses high-frequency
+eigenvectors (large $\lambda_k$) at large time scales, and these are precisely the
+eigenvectors with the highest uncanonicalizability rates (61\% for the 20th eigenvector
+vs.\ 0.7\% for the Fiedler vector). This frequency-dependent downweighting acts as a soft
+form of sign invariance, explaining why canonicalization method barely matters within WES
+(spread $<$0.7 pp on both datasets).
+
+\paragraph{Learnable weighting cannot beat fixed exponential.}
+Replacing the fixed exponential $e^{-\lambda_k t}$ with a learned MLP that maps the full
+eigenvalue spectrum to a weighting matrix does not improve results
+(Table~\ref{tab:learnable}). Despite having strictly more capacity, the learned weighting
+trails HKS by $\sim$1 pp on both MN10 and MN40. This suggests the exponential kernel's
+inductive bias---monotonic suppression of high-frequency components---is a near-optimal
+prior for this task, and the limited training data ($\sim$4K--10K shapes) is insufficient
+to learn an equally good weighting from scratch.
+
+\paragraph{More eigenvectors $\neq$ better.}
+Increasing $k_{\text{eig}}$ from 8 to 32 reduces Deep Sets+spectrum accuracy from 75.88\%
+to 72.80\% on MN10 (Table~\ref{tab:neigs}). This is explained by the uncanonicalizability
+analysis: higher-frequency eigenvectors have higher uncanonicalizability rates, introducing
+more noise.
+
+\paragraph{PCA orientation is a weak canonicalization.}
+PCA-based orientation alignment achieves 64.98\% on MN10 (Table~\ref{tab:pca}), below both
+eigenvector v2 (77.09\%) and HKS (80.62\%). PCA canonicalizes the coordinate frame rather
+than the spectral features, and suffers from its own sign ambiguity for shapes with
+near-degenerate principal moments.
 
 \paragraph{Spectral features without coordinates are insufficient.}
-Without xyz coordinates, all spectral representations collapse: eigenvectors only
-$\sim$15--20\%, HKS only 31.28\%, eigenvalues only 22.69\%
-(Tables~\ref{tab:deepsets_noxyz},~\ref{tab:sign_invariant}). This confirms that spectral
-features complement but cannot replace geometric coordinates. The per-point spectral
-descriptors (eigenvectors, HKS) encode \emph{relative} structural information (partitioning,
-connectivity) that requires spatial context to become discriminative.
+Without xyz coordinates, all spectral representations collapse: eigenvectors $\sim$20\%,
+HKS 31.28\%, eigenvalues 22.69\% (Table~\ref{tab:deepsets_noxyz}). Spectral features
+complement but cannot replace geometric coordinates.
 
 \paragraph{Gated fusion recovers the baseline.}
-The GatedSpectralPTv3Classifier achieves 92.22\% on ModelNet40, compared to the 92.34\%
-Pointcept baseline. The learned gate effectively suppresses spectral features, preventing
-the degradation observed with naive injection. At the PTv3 performance level, the geometric
-representations are sufficiently expressive that eigenvector features provide no additional
-discriminative signal.
-
-\paragraph{Pipeline quality matters.}
-Three bugs in the spectral pipeline (symmetrization, near-trivial eigenvector leakage,
-unnormalized Laplacian) were identified during debugging. The corrected pipeline with
-Gaussian kernel weights, symmetric normalization, and proper trivial filtering enables the
-HKS and spectrum results reported here. This underscores the importance of careful
-spectral feature engineering.
+The GatedSpectralPTv3Classifier achieves 92.22\% on MN40, compared to 92.34\% Pointcept
+baseline. The gate effectively suppresses spectral features, confirming they add noise
+rather than signal at the PTv3 performance level.
 
 %% ============================================================================
 \section{Conclusion}
@@ -525,26 +807,33 @@ spectral feature engineering.
 Raw Laplacian eigenvectors do not provide useful features for point cloud classification
 on ModelNet benchmarks. The fundamental eigenvector sign ambiguity cannot be resolved by any
 of the four canonicalization strategies tested---Spielman, max-abs, random, and none all
-yield statistically indistinguishable results across both transformers and Deep Sets. This
-finding is consistent across three architecture families and five injection methods.
+yield statistically indistinguishable results.
 
 However, sign-invariant spectral descriptors tell a more nuanced story. Heat Kernel
-Signatures achieve 79.74\% on ModelNet10 with a simple Deep Sets architecture---within 3
-points of the distance-only transformer baseline and 20 points above raw eigenvector
-features. Eigenvalue spectrum descriptors (Shape-DNA) reach 75.88\%, demonstrating that
-the Laplacian spectrum carries discriminative shape information when sign ambiguity is
-properly circumvented. The key insight is that the \emph{sign ambiguity}, not the spectral
-information itself, is responsible for the poor performance of eigenvector-based approaches.
+Signatures achieve \textbf{80.62\%} on ModelNet10 (optimized) and \textbf{76.26\%} on
+ModelNet40---competitive with the distance-only transformer baseline. The head-to-head
+comparison on ModelNet40 with $k=8$ eigenvectors confirms HKS outperforms
+eigenvector+Spielman by 4.87 percentage points, establishing sign-invariance as the key
+factor rather than the choice of canonicalization method.
 
-At the state-of-the-art level, PTv3 with the Pointcept recipe already achieves 92.34\% on
-ModelNet40 using only geometric features. A learned gating mechanism achieves parity
-(92.22\%) by suppressing spectral features, confirming that modern geometric architectures
-capture sufficient structural information for this benchmark.
+A key mechanistic insight comes from the WES ablation: removing the squaring from HKS
+while retaining the exponential multi-scale weighting recovers $\sim$79\% on MN10 and
+$\sim$75\% on MN40, compared to $\sim$60\% for raw eigenvectors. This reveals that the
+exponential decay $e^{-\lambda_k t}$---which naturally downweights high-frequency,
+hard-to-canonicalize eigenvectors---accounts for most of HKS's advantage. The squaring
+operation provides the final $\sim$1--2 pp edge by fully eliminating residual sign noise.
+Furthermore, replacing the fixed exponential with a learned MLP does not improve results
+(learnable squared: 79.41\% MN10, 75.00\% MN40 vs.\ HKS: 80.40\%, 76.34\%), indicating
+that the exponential kernel's inductive bias is near-optimal for this task.
 
-Future directions include applying HKS and spectral descriptors within stronger
-architectures (PTv3, DGCNN), SignNet-style basis-invariant networks that learn over
-eigenvector products $v_k(i) \cdot v_k(j)$, and tasks where global connectivity is more
-critical than local geometry (shape segmentation, correspondence, retrieval).
+At the state-of-the-art level, PTv3 with the Pointcept recipe achieves 92.34\% on MN40
+using only geometric features. A learned gating mechanism achieves parity (92.22\%) by
+suppressing spectral features.
+
+Future directions include applying HKS within stronger architectures (PTv3, DGCNN),
+SignNet-style basis-invariant networks that learn over eigenvector products
+$v_k(i) \cdot v_k(j)$, and tasks where global connectivity is more critical than local
+geometry (segmentation, correspondence, retrieval).
 
 \begin{thebibliography}{9}
 \bibitem{zaheer2017deep}

@@ -36,9 +36,7 @@ def right_shift(binary, k=1, axis=-1):
     # Determine the slicing pattern to eliminate just the last one.
     slicing = [slice(None)] * len(binary.shape)
     slicing[axis] = slice(None, -k)
-    shifted = torch.nn.functional.pad(
-        binary[tuple(slicing)], (k, 0), mode="constant", value=0
-    )
+    shifted = torch.nn.functional.pad(binary[tuple(slicing)], (k, 0), mode="constant", value=0)
 
     return shifted
 
@@ -160,18 +158,14 @@ def encode(locs, num_dims, num_bits):
             mask = gray[:, dim, bit]
 
             # Where this bit is on, invert the 0 dimension for lower bits.
-            gray[:, 0, bit + 1 :] = torch.logical_xor(
-                gray[:, 0, bit + 1 :], mask[:, None]
-            )
+            gray[:, 0, bit + 1 :] = torch.logical_xor(gray[:, 0, bit + 1 :], mask[:, None])
 
             # Where the bit is off, exchange the lower bits with the 0 dimension.
             to_flip = torch.logical_and(
                 torch.logical_not(mask[:, None]).repeat(1, gray.shape[2] - bit - 1),
                 torch.logical_xor(gray[:, 0, bit + 1 :], gray[:, dim, bit + 1 :]),
             )
-            gray[:, dim, bit + 1 :] = torch.logical_xor(
-                gray[:, dim, bit + 1 :], to_flip
-            )
+            gray[:, dim, bit + 1 :] = torch.logical_xor(gray[:, dim, bit + 1 :], to_flip)
             gray[:, 0, bit + 1 :] = torch.logical_xor(gray[:, 0, bit + 1 :], to_flip)
 
     # Now flatten out.
@@ -186,10 +180,7 @@ def encode(locs, num_dims, num_bits):
 
     # Convert binary values into uint8s.
     hh_uint8 = (
-        (padded.flip(-1).reshape((-1, 8, 8)) * bitpack_mask)
-        .sum(2)
-        .squeeze()
-        .type(torch.uint8)
+        (padded.flip(-1).reshape((-1, 8, 8)) * bitpack_mask).sum(2).squeeze().type(torch.uint8)
     )
 
     # Convert uint8s into uint64s.
@@ -242,9 +233,7 @@ def decode(hilberts, num_dims, num_bits):
 
     # Treat each of the hilberts as a s equence of eight uint8.
     # This treats all of the inputs as uint64 and makes things uniform.
-    hh_uint8 = (
-        hilberts.ravel().type(torch.int64).view(torch.uint8).reshape((-1, 8)).flip(-1)
-    )
+    hh_uint8 = hilberts.ravel().type(torch.int64).view(torch.uint8).reshape((-1, 8)).flip(-1)
 
     # Turn these lists of uints into lists of bits and then truncate to the size
     # we actually need for using Skilling's procedure.
@@ -271,18 +260,14 @@ def decode(hilberts, num_dims, num_bits):
             mask = gray[:, dim, bit]
 
             # Where this bit is on, invert the 0 dimension for lower bits.
-            gray[:, 0, bit + 1 :] = torch.logical_xor(
-                gray[:, 0, bit + 1 :], mask[:, None]
-            )
+            gray[:, 0, bit + 1 :] = torch.logical_xor(gray[:, 0, bit + 1 :], mask[:, None])
 
             # Where the bit is off, exchange the lower bits with the 0 dimension.
             to_flip = torch.logical_and(
                 torch.logical_not(mask[:, None]),
                 torch.logical_xor(gray[:, 0, bit + 1 :], gray[:, dim, bit + 1 :]),
             )
-            gray[:, dim, bit + 1 :] = torch.logical_xor(
-                gray[:, dim, bit + 1 :], to_flip
-            )
+            gray[:, dim, bit + 1 :] = torch.logical_xor(gray[:, dim, bit + 1 :], to_flip)
             gray[:, 0, bit + 1 :] = torch.logical_xor(gray[:, 0, bit + 1 :], to_flip)
 
     # Pad back out to 64 bits.

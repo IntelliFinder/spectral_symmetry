@@ -509,19 +509,336 @@ def spectral_canonicalize(eigenvectors, eigenvalues, precision=8):
 
 
 # ---------------------------------------------------------------------------
+# MAP / OAP shared helpers (faithful numpy ports of the reference torch code)
+# ---------------------------------------------------------------------------
+
+
+def _group_eigenvalues_by_rounding(eigenvalues, decimals):
+    """Group eigenvalues by rounding to a fixed number of decimal places.
+
+    Matches the reference MAP/OAP eigenvalue grouping exactly:
+    ``E.round(decimals=decimals)`` then ``unique(..., return_counts=True)``.
+
+    Parameters
+    ----------
+    eigenvalues : ndarray of shape (k,)
+    decimals : int
+
+    Returns
+    -------
+    ind : ndarray of shape (g+1,), boundary indices for each group.
+    mult : ndarray of shape (g,), multiplicity of each group.
+    """
+    rounded = np.round(eigenvalues, decimals=decimals)
+    _, mult = np.unique(rounded, return_counts=True)
+    ind = np.concatenate([[0], np.cumsum(mult)])
+    return ind, mult
+
+
+def _hash_column(col, i):
+    """Hash a column vector with a distinguished index (OAP grouping).
+
+    Faithful port of ``hash_tensor`` from the reference ``oap.py``:
+    ``float('%.5g' % (sum(col**3) + col[i]))``.
+    """
+    return float("%.5g" % (np.sum(col**3) + col[i]))
+
+
+def _orthogonalize_qr(U):
+    """Orthogonalize via plain QR (MAP style, no sign correction)."""
+    Q, _R = np.linalg.qr(U)
+    return Q
+
+
+def _orthogonalize_qr_signed(U):
+    """Orthogonalize via QR with sign correction (OAP style).
+
+    Returns ``Q * sign(diag(R))``.
+    """
+    Q, R = np.linalg.qr(U)
+    S = np.sign(np.diag(R))
+    return Q * S
+
+
+def _find_complementary_space(U, u_span, orthogonalize_fn):
+    """Find the orthogonal complementary space of u_span in span(U).
+
+    Faithful port of ``find_complementary_space`` from the reference.
+
+    Parameters
+    ----------
+    U : ndarray of shape (n, d)
+    u_span : ndarray of shape (n, s), s <= d
+    orthogonalize_fn : callable
+        ``_orthogonalize_qr`` for MAP, ``_orthogonalize_qr_signed`` for OAP.
+
+    Returns
+    -------
+    u_perp : ndarray of shape (n, d - s)
+    """
+    n, d = U.shape
+    s = u_span.shape[1]
+    u_base = u_span.copy()
+    for j in range(d):
+        i = u_base.shape[1]
+        u_j = U[:, j : j + 1]  # (n, 1)
+        u_temp = np.concatenate([u_base, u_j], axis=1)
+        if np.linalg.matrix_rank(u_temp) == i + 1:
+            u_base = u_temp
+        if u_base.shape[1] == d:
+            break
+    u_base = orthogonalize_fn(u_base)
+    return u_base[:, s:d]
+
+
+# ---------------------------------------------------------------------------
+# MAP sign disambiguation (faithful port of unique_sign from map.py)
+# ---------------------------------------------------------------------------
+
+
+def _map_sign_disambiguate(U):
+    """Eliminate sign ambiguity using projection-based grouping (MAP).
+
+    For each column u, forms P = u u^T, groups coordinates by
+    ||P[:, i]|| (rounded to 14 decimals), builds test vectors from those
+    groups, and picks the sign from the first non-zero projection.
+
+    Parameters
+    ----------
+    U : ndarray of shape (n, d)
+
+    Returns
+    -------
+    U_out : ndarray of shape (n, d)
+    """
+    n, d = U.shape
+    U = U.copy()
+    for i in range(d):
+        u = U[:, i].reshape(n, 1)
+        P = u @ u.T  # (n, n)
+        E = np.eye(n)
+        J = np.ones(n)
+        Pe = [np.round(np.linalg.norm(P[:, j]), decimals=14) for j in range(n)]
+        Pe = list(enumerate(Pe))
+        Pe.sort(key=lambda x: x[1])
+        indices = [x[0] for x in Pe]
+        lengths = [x[1] for x in Pe]
+        _, counts = np.unique(lengths, return_counts=True)
+        step = 0
+        X = np.zeros((len(counts), n))
+        for j in range(len(counts)):
+            for _ in range(counts[j]):
+                X[j] += E[indices[step]]
+                step += 1
+            X[j] += 10 * J
+        flag = True
+        u_0 = np.zeros(n)
+        for j in range(len(counts)):
+            u_0 = P @ X[j]
+            if np.round(np.linalg.norm(u_0), decimals=12) != 0:
+                x = X[j]
+                flag = False
+                break
+        if flag:
+            continue
+        u_flat = u.ravel()
+        u_0 /= np.abs(u_flat @ x)
+        U[:, i] = u_0
+    return U
+
+
+# ---------------------------------------------------------------------------
+# OAP sign disambiguation (faithful port of oap_sign from oap.py)
+# ---------------------------------------------------------------------------
+
+
+def _oap_sign_disambiguate(U):
+    """Eliminate sign ambiguity using projection-based grouping (OAP).
+
+    Same algorithm as MAP sign but rounds norms to 6 decimals and
+    zero-check to 6 decimals.
+
+    Parameters
+    ----------
+    U : ndarray of shape (n, d)
+
+    Returns
+    -------
+    U_out : ndarray of shape (n, d)
+    """
+    n, d = U.shape
+    U = U.copy()
+    for i in range(d):
+        u = U[:, i].reshape(n, 1)
+        P = u @ u.T
+        E = np.eye(n)
+        J = np.ones(n)
+        Pe = [np.round(np.linalg.norm(P[:, j]), decimals=6) for j in range(n)]
+        Pe = list(enumerate(Pe))
+        Pe.sort(key=lambda x: x[1])
+        indices = [x[0] for x in Pe]
+        lengths = [x[1] for x in Pe]
+        _, counts = np.unique(lengths, return_counts=True)
+        step = 0
+        X = np.zeros((len(counts), n))
+        for j in range(len(counts)):
+            for _ in range(counts[j]):
+                X[j] += E[indices[step]]
+                step += 1
+            X[j] += 10 * J
+        flag = True
+        u_0 = np.zeros(n)
+        for j in range(len(counts)):
+            u_0 = P @ X[j]
+            if np.round(np.linalg.norm(u_0), decimals=6) != 0:
+                x = X[j]
+                flag = False
+                break
+        if flag:
+            continue
+        u_flat = u.ravel()
+        u_0 /= np.abs(u_flat @ x)
+        U[:, i] = u_0
+    return U
+
+
+# ---------------------------------------------------------------------------
+# MAP basis disambiguation (faithful port of unique_basis from map.py)
+# ---------------------------------------------------------------------------
+
+
+def _map_canonicalize_eigenspace(U_i):
+    """Eliminate basis ambiguity for a degenerate eigenspace (MAP).
+
+    Uses projection matrix P = U U^T, groups coordinates by ||P[:, i]||
+    (rounded to 14 decimals), selects d groups from largest norm down,
+    and incrementally builds a canonical basis via complementary space
+    projection.
+
+    Parameters
+    ----------
+    U_i : ndarray of shape (n, d)
+
+    Returns
+    -------
+    U_0 : ndarray of shape (n, d), canonical orthonormal basis.
+
+    Raises
+    ------
+    AssertionError
+        If basis assumptions are violated.
+    """
+    n, d = U_i.shape
+    E = np.eye(n)
+    J = np.ones(n)
+    P = U_i @ U_i.T
+    Pe = [np.round(np.linalg.norm(P[:, i]), decimals=14) for i in range(n)]
+    Pe = list(enumerate(Pe))
+    Pe.sort(key=lambda x: x[1])
+    indices = [x[0] for x in Pe]
+    lengths = [x[1] for x in Pe]
+    _, counts = np.unique(lengths, return_counts=True)
+    assert len(counts) >= d  # basis assumption 1
+    X = np.zeros((d, n))
+    step = -1
+    for i in range(1, d + 1):
+        x = np.zeros(n)
+        for _ in range(counts[-i]):
+            x += E[indices[step]]
+            step -= 1
+        X[i - 1] = x + 10 * J
+    U_0 = np.zeros((n, d))
+    u_span = np.empty((n, 0))
+    u_perp = U_i.copy()
+    for i in range(d):
+        P_perp = u_perp @ u_perp.T
+        u_i = P_perp @ X[i]
+        assert np.linalg.norm(u_i) != 0  # basis assumption 2
+        u_i = u_i / np.linalg.norm(u_i)
+        U_0[:, i] = u_i
+        u_span = np.concatenate([u_span, u_i.reshape(n, 1)], axis=1)
+        u_perp = _find_complementary_space(U_i, u_span, _orthogonalize_qr)
+    return U_0
+
+
+# ---------------------------------------------------------------------------
+# OAP basis disambiguation (faithful port of oap_basis from oap.py)
+# ---------------------------------------------------------------------------
+
+
+def _oap_canonicalize_eigenspace(U_i):
+    """Eliminate basis ambiguity for a degenerate eigenspace (OAP).
+
+    Uses projection matrix P = U U^T, groups coordinates by hash
+    (``_hash_column``), greedily collects d linearly independent
+    projections, and orthogonalizes with QR + sign correction.
+
+    Parameters
+    ----------
+    U_i : ndarray of shape (n, d)
+
+    Returns
+    -------
+    U_0 : ndarray of shape (n, d), canonical orthonormal basis.
+
+    Raises
+    ------
+    AssertionError
+        If basis assumptions are violated.
+    """
+    n, d = U_i.shape
+    E = np.eye(n)
+    J = np.ones(n)
+    P = U_i @ U_i.T
+    Pe = [_hash_column(P[:, i], i) for i in range(n)]
+    Pe = list(enumerate(Pe))
+    Pe.sort(key=lambda x: x[1])
+    indices = [x[0] for x in Pe]
+    lengths = [x[1] for x in Pe]
+    _, counts = np.unique(lengths, return_counts=True)
+    k = len(counts)
+    assert k >= d
+    X = np.zeros((k, n))
+    step = -1
+    for i in range(1, k + 1):
+        x = np.zeros(n)
+        for _ in range(counts[-i]):
+            x += E[indices[step]]
+            step -= 1
+        X[i - 1] = x + 10 * J
+    u_span = np.empty((n, 0))
+    current_rank = 0
+    for i in range(k):
+        u_i = P @ X[i]
+        norm_u = np.linalg.norm(u_i)
+        if norm_u < 1e-15:
+            continue
+        u_i = u_i / norm_u
+        u_span_tmp = np.concatenate([u_span, u_i.reshape(n, 1)], axis=1)
+        if np.linalg.matrix_rank(u_span_tmp) == current_rank + 1:
+            u_span = u_span_tmp
+            current_rank += 1
+            if current_rank == d:
+                break
+    assert current_rank == d
+    U_0 = _orthogonalize_qr_signed(u_span)
+    return U_0
+
+
+# ---------------------------------------------------------------------------
 # MAP: Maximal Axis Projection (Ma et al., NeurIPS 2023)
 # ---------------------------------------------------------------------------
 
 
-def spectral_canonicalize_map(eigenvectors, eigenvalues, rtol=1e-3):
+def spectral_canonicalize_map(eigenvectors, eigenvalues):
     """Canonicalize eigenvectors via Maximal Axis Projection (MAP).
 
-    For each eigenspace (group of eigenvectors sharing an eigenvalue):
-    - **Multiplicity 1**: flip sign so the entry with largest absolute value
-      is positive (with deterministic tie-breaking by smallest index).
-    - **Multiplicity m > 1**: greedily select m coordinate axes that have
-      maximal projection onto the eigenspace, then build a canonical basis
-      by projecting those axes into the eigenspace and orthonormalizing.
+    Faithful numpy port of the reference implementation from
+    PKU-ML/canonicalization (map.py). Uses projection-matrix-based sign
+    disambiguation (mult-1) and complementary-space basis construction
+    (mult > 1) for permutation-equivariant canonicalization.
+
+    Eigenvalue grouping uses ``round(decimals=14)`` matching the reference.
 
     Reference: Ma et al., "Laplacian Canonization: A Minimalist Approach to
     Sign and Basis Invariance", NeurIPS 2023.
@@ -530,8 +847,6 @@ def spectral_canonicalize_map(eigenvectors, eigenvalues, rtol=1e-3):
     ----------
     eigenvectors : ndarray of shape (n, k)
     eigenvalues : ndarray of shape (k,)
-    rtol : float
-        Relative tolerance for eigenvalue grouping.
 
     Returns
     -------
@@ -546,113 +861,18 @@ def spectral_canonicalize_map(eigenvectors, eigenvalues, rtol=1e-3):
     n, k = eigenvectors.shape
     result = eigenvectors.copy()
 
-    mult_info = detect_eigenvalue_multiplicities(eigenvalues, rtol=rtol)
-    group_indices = mult_info["group_indices"]
+    ind, mult = _group_eigenvalues_by_rounding(eigenvalues, decimals=14)
 
-    # Process each eigenspace group
-    groups = {}
-    for j in range(k):
-        g = group_indices[j]
-        if g not in groups:
-            groups[g] = []
-        groups[g].append(j)
-
-    for cols in groups.values():
-        m = len(cols)
-        U = eigenvectors[:, cols].copy()  # (n, m)
-
-        if m == 1:
-            # Multiplicity 1: maxabs sign flip
-            v = U[:, 0]
-            abs_v = np.abs(v)
-            i_max = int(np.argmax(abs_v))
-            if v[i_max] < 0:
-                result[:, cols[0]] = -v
-            else:
-                result[:, cols[0]] = v
+    for i in range(len(mult)):
+        cols = slice(int(ind[i]), int(ind[i + 1]))
+        U = result[:, cols].copy()
+        if mult[i] == 1:
+            result[:, cols] = _map_sign_disambiguate(U)
         else:
-            # Multiplicity > 1: axis projection canonicalization
-            result[:, cols] = _map_canonicalize_eigenspace(U)
-
-    return result
-
-
-def _map_canonicalize_eigenspace(U):
-    """Canonicalize a degenerate eigenspace via maximal axis projection.
-
-    Given U (n x m) whose columns span an eigenspace of multiplicity m,
-    greedily selects m coordinate axes e_{i_1}, ..., e_{i_m} that have
-    maximal projection onto the eigenspace, then builds a canonical ONB by
-    projecting each axis into the remaining subspace and orthonormalizing.
-
-    All operations use an ONB Q_U for the eigenspace, ensuring canonical
-    vectors stay exactly within span(U).
-
-    Parameters
-    ----------
-    U : ndarray of shape (n, m)
-
-    Returns
-    -------
-    V_canon : ndarray of shape (n, m), canonical orthonormal basis.
-    """
-    n, m = U.shape
-
-    # ONB for the eigenspace — all projections go through this
-    Q_U, _ = np.linalg.qr(U, mode="reduced")  # (n, m)
-
-    # We'll work in the m-dimensional coefficient space
-    # A row of Q_U gives the coefficients of e_i projected into the eigenspace
-    # ||proj_{eigenspace}(e_i)||^2 = sum_j Q_U[i,j]^2
-
-    result = np.zeros((n, m))
-    used_dirs = np.zeros((m, 0))  # directions already used (in coeff space)
-
-    for col_idx in range(m):
-        # Compute projection norms onto the remaining subspace
-        if used_dirs.shape[1] > 0:
-            # Remove used direction components from each row's coefficient vector
-            Q_U_coeffs = Q_U.copy()
-            for j in range(used_dirs.shape[1]):
-                d = used_dirs[:, j]
-                # For each row i: remove component along d
-                dots = Q_U_coeffs @ d  # (n,)
-                Q_U_coeffs -= np.outer(dots, d)
-            proj_norms_sq = np.sum(Q_U_coeffs**2, axis=1)
-        else:
-            proj_norms_sq = np.sum(Q_U**2, axis=1)
-
-        # Select axis with maximal remaining projection
-        i_star = int(np.argmax(proj_norms_sq))
-
-        # Get the coefficient vector for this axis in the eigenspace
-        coeff = Q_U[i_star, :].copy()  # (m,)
-
-        # Remove components along already-used directions (Gram-Schmidt in coeff space)
-        for j in range(used_dirs.shape[1]):
-            d = used_dirs[:, j]
-            coeff -= np.dot(coeff, d) * d
-
-        norm = np.linalg.norm(coeff)
-        if norm < 1e-12:
-            # Degenerate — shouldn't happen for correct eigenspace dimension
-            break
-        coeff /= norm
-
-        # Convert back to n-dimensional space: v = Q_U @ coeff
-        v = Q_U @ coeff
-
-        # Sign convention: largest absolute entry positive
-        i_max = int(np.argmax(np.abs(v)))
-        if v[i_max] < 0:
-            coeff = -coeff
-            v = -v
-
-        result[:, col_idx] = v
-        if used_dirs.shape[1] > 0:
-            used_dirs = np.column_stack([used_dirs, coeff])
-        else:
-            used_dirs = coeff.reshape(-1, 1)
+            try:
+                result[:, cols] = _map_canonicalize_eigenspace(U)
+            except AssertionError:
+                continue
 
     return result
 
@@ -662,12 +882,15 @@ def _map_canonicalize_eigenspace(U):
 # ---------------------------------------------------------------------------
 
 
-def spectral_canonicalize_oap(eigenvectors, eigenvalues, rtol=1e-3):
+def spectral_canonicalize_oap(eigenvectors, eigenvalues):
     """Canonicalize eigenvectors via Orthogonalized Axis Projection (OAP).
 
-    Improvement over MAP: after selecting axes and projecting into the
-    eigenspace, applies Gram-Schmidt orthogonalization for a cleaner
-    orthonormal basis. Also uses a more robust axis selection criterion.
+    Faithful numpy port of the reference implementation from
+    PKU-ML/canonicalization (oap.py). Uses projection-matrix-based sign
+    disambiguation (mult-1) and hash-based greedy basis construction
+    with QR+sign orthogonalization (mult > 1).
+
+    Eigenvalue grouping uses ``round(decimals=6)`` matching the reference.
 
     Reference: Ma et al., NeurIPS 2024.
 
@@ -675,8 +898,6 @@ def spectral_canonicalize_oap(eigenvectors, eigenvalues, rtol=1e-3):
     ----------
     eigenvectors : ndarray of shape (n, k)
     eigenvalues : ndarray of shape (k,)
-    rtol : float
-        Relative tolerance for eigenvalue grouping.
 
     Returns
     -------
@@ -691,137 +912,18 @@ def spectral_canonicalize_oap(eigenvectors, eigenvalues, rtol=1e-3):
     n, k = eigenvectors.shape
     result = eigenvectors.copy()
 
-    mult_info = detect_eigenvalue_multiplicities(eigenvalues, rtol=rtol)
-    group_indices = mult_info["group_indices"]
+    ind, mult = _group_eigenvalues_by_rounding(eigenvalues, decimals=6)
 
-    # Process each eigenspace group
-    groups = {}
-    for j in range(k):
-        g = group_indices[j]
-        if g not in groups:
-            groups[g] = []
-        groups[g].append(j)
-
-    for cols in groups.values():
-        m = len(cols)
-        U = eigenvectors[:, cols].copy()  # (n, m)
-
-        if m == 1:
-            # Multiplicity 1: maxabs sign flip (same as MAP)
-            v = U[:, 0]
-            abs_v = np.abs(v)
-            i_max = int(np.argmax(abs_v))
-            if v[i_max] < 0:
-                result[:, cols[0]] = -v
-            else:
-                result[:, cols[0]] = v
+    for i in range(len(mult)):
+        cols = slice(int(ind[i]), int(ind[i + 1]))
+        U = result[:, cols].copy()
+        if mult[i] == 1:
+            result[:, cols] = _oap_sign_disambiguate(U)
         else:
-            # Multiplicity > 1: OAP with Gram-Schmidt
-            result[:, cols] = _oap_canonicalize_eigenspace(U)
-
-    return result
-
-
-def _oap_canonicalize_eigenspace(U):
-    """Canonicalize a degenerate eigenspace via orthogonalized axis projection.
-
-    Like MAP, selects m coordinate axes greedily by maximal projection onto
-    the remaining eigenspace. Then performs Gram-Schmidt orthogonalization
-    on the raw projections (in coefficient space) for improved numerical
-    stability. All operations are done in the eigenspace coefficient space
-    to guarantee the result spans exactly span(U).
-
-    Parameters
-    ----------
-    U : ndarray of shape (n, m)
-
-    Returns
-    -------
-    V_canon : ndarray of shape (n, m), canonical orthonormal basis.
-    """
-    n, m = U.shape
-
-    # ONB for the eigenspace
-    Q_U, _ = np.linalg.qr(U, mode="reduced")  # (n, m)
-
-    # Step 1: Select m axes greedily and collect raw coefficient vectors
-    raw_coeffs = []  # raw Q_U[i_star, :] before orthogonalization
-    used_coeff_dirs = np.zeros((m, 0))
-
-    for _ in range(m):
-        # Compute remaining projection norms
-        if used_coeff_dirs.shape[1] > 0:
-            Q_U_rem = Q_U.copy()
-            for j in range(used_coeff_dirs.shape[1]):
-                d = used_coeff_dirs[:, j]
-                dots = Q_U_rem @ d
-                Q_U_rem -= np.outer(dots, d)
-            proj_norms_sq = np.sum(Q_U_rem**2, axis=1)
-        else:
-            proj_norms_sq = np.sum(Q_U**2, axis=1)
-
-        i_star = int(np.argmax(proj_norms_sq))
-
-        # Raw projection coefficient: Q_U[i_star, :]
-        coeff = Q_U[i_star, :].copy()
-        raw_coeffs.append(coeff)
-
-        # Track which direction we used (normalized, for next iteration)
-        c_orth = coeff.copy()
-        for j in range(used_coeff_dirs.shape[1]):
-            d = used_coeff_dirs[:, j]
-            c_orth -= np.dot(c_orth, d) * d
-        norm_c = np.linalg.norm(c_orth)
-        if norm_c > 1e-12:
-            c_orth /= norm_c
-            used_coeff_dirs = (
-                np.column_stack([used_coeff_dirs, c_orth])
-                if used_coeff_dirs.shape[1] > 0
-                else c_orth.reshape(-1, 1)
-            )
-
-    # Step 2: Gram-Schmidt on raw coefficients
-    result = np.zeros((n, m))
-    orth_coeffs = np.zeros((m, 0))
-
-    for j, raw_c in enumerate(raw_coeffs):
-        c = raw_c.copy()
-        # Subtract components along already-built directions
-        for i in range(orth_coeffs.shape[1]):
-            d = orth_coeffs[:, i]
-            c -= np.dot(c, d) * d
-        norm_c = np.linalg.norm(c)
-        if norm_c < 1e-12:
-            # Fallback: find unused direction in eigenspace
-            for k in range(m):
-                e_k = np.zeros(m)
-                e_k[k] = 1.0
-                for i in range(orth_coeffs.shape[1]):
-                    d = orth_coeffs[:, i]
-                    e_k -= np.dot(e_k, d) * d
-                if np.linalg.norm(e_k) > 1e-10:
-                    c = e_k
-                    norm_c = np.linalg.norm(c)
-                    break
-        if norm_c < 1e-12:
-            # All directions exhausted; use raw direction as-is
-            c = raw_c.copy()
-            norm_c = max(np.linalg.norm(c), 1e-12)
-        c /= norm_c
-
-        # Convert to n-dimensional space
-        v = Q_U @ c
-
-        # Sign convention: largest absolute entry positive
-        i_max = int(np.argmax(np.abs(v)))
-        if v[i_max] < 0:
-            c = -c
-            v = -v
-
-        result[:, j] = v
-        orth_coeffs = (
-            np.column_stack([orth_coeffs, c]) if orth_coeffs.shape[1] > 0 else c.reshape(-1, 1)
-        )
+            try:
+                result[:, cols] = _oap_canonicalize_eigenspace(U)
+            except AssertionError:
+                continue
 
     return result
 

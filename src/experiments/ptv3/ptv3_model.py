@@ -6,16 +6,17 @@ Author: Xiaoyang Wu (xiaoyang.wu.cs@gmail.com)
 Please cite our work if the code is helpful to you.
 """
 
-import sys
-from functools import partial
-from addict import Dict
 import math
+import sys
+from collections import OrderedDict
+from functools import partial
+
+import spconv.pytorch as spconv
 import torch
 import torch.nn as nn
-import spconv.pytorch as spconv
 import torch_scatter
+from addict import Dict
 from timm.models.layers import DropPath
-from collections import OrderedDict
 
 try:
     import flash_attn
@@ -27,17 +28,15 @@ from .serialization import encode
 
 @torch.inference_mode()
 def offset2bincount(offset):
-    return torch.diff(
-        offset, prepend=torch.tensor([0], device=offset.device, dtype=torch.long)
-    )
+    return torch.diff(offset, prepend=torch.tensor([0], device=offset.device, dtype=torch.long))
 
 
 @torch.inference_mode()
 def offset2batch(offset):
     bincount = offset2bincount(offset)
-    return torch.arange(
-        len(bincount), device=offset.device, dtype=torch.long
-    ).repeat_interleave(bincount)
+    return torch.arange(len(bincount), device=offset.device, dtype=torch.long).repeat_interleave(
+        bincount
+    )
 
 
 @torch.inference_mode()
@@ -112,17 +111,13 @@ class Point(Dict):
         #  Order2 ([n]),
         #   ...
         #  OrderN ([n])] (k, n)
-        code = [
-            encode(self.grid_coord, self.batch, depth, order=order_) for order_ in order
-        ]
+        code = [encode(self.grid_coord, self.batch, depth, order=order_) for order_ in order]
         code = torch.stack(code)
         order = torch.argsort(code)
         inverse = torch.zeros_like(order).scatter_(
             dim=1,
             index=order,
-            src=torch.arange(0, code.shape[1], device=order.device).repeat(
-                code.shape[0], 1
-            ),
+            src=torch.arange(0, code.shape[1], device=order.device).repeat(code.shape[0], 1),
         )
 
         if shuffle_orders:
@@ -159,9 +154,7 @@ class Point(Dict):
         if "sparse_shape" in self.keys():
             sparse_shape = self.sparse_shape
         else:
-            sparse_shape = torch.add(
-                torch.max(self.grid_coord, dim=0).values, pad
-            ).tolist()
+            sparse_shape = torch.add(torch.max(self.grid_coord, dim=0).values, pad).tolist()
         sparse_conv_feat = spconv.SparseConvTensor(
             features=self.feat,
             indices=torch.cat(
@@ -241,9 +234,7 @@ class PointSequential(PointModule):
                 if isinstance(input, Point):
                     input.feat = module(input.feat)
                     if "sparse_conv_feat" in input.keys():
-                        input.sparse_conv_feat = input.sparse_conv_feat.replace_feature(
-                            input.feat
-                        )
+                        input.sparse_conv_feat = input.sparse_conv_feat.replace_feature(input.feat)
                 elif isinstance(input, spconv.SparseConvTensor):
                     if input.indices.shape[0] != 0:
                         input = input.replace_feature(module(input.features))
@@ -343,15 +334,13 @@ class SerializedAttention(PointModule):
         self.enable_rpe = enable_rpe
         self.enable_flash = enable_flash
         if enable_flash:
-            assert (
-                enable_rpe is False
-            ), "Set enable_rpe to False when enable Flash Attention"
-            assert (
-                upcast_attention is False
-            ), "Set upcast_attention to False when enable Flash Attention"
-            assert (
-                upcast_softmax is False
-            ), "Set upcast_softmax to False when enable Flash Attention"
+            assert enable_rpe is False, "Set enable_rpe to False when enable Flash Attention"
+            assert upcast_attention is False, (
+                "Set upcast_attention to False when enable Flash Attention"
+            )
+            assert upcast_softmax is False, (
+                "Set upcast_softmax to False when enable Flash Attention"
+            )
             assert flash_attn is not None, "Make sure flash_attn is installed."
             self.patch_size = patch_size
             self.attn_drop = attn_drop
@@ -417,8 +406,7 @@ class SerializedAttention(PointModule):
                     ] = pad[
                         _offset_pad[i + 1]
                         - 2 * self.patch_size
-                        + (bincount[i] % self.patch_size) : _offset_pad[i + 1]
-                        - self.patch_size
+                        + (bincount[i] % self.patch_size) : _offset_pad[i + 1] - self.patch_size
                     ]
                 pad[_offset_pad[i] : _offset_pad[i + 1]] -= _offset_pad[i] - _offset[i]
                 cu_seqlens.append(
@@ -439,9 +427,7 @@ class SerializedAttention(PointModule):
 
     def forward(self, point):
         if not self.enable_flash:
-            self.patch_size = min(
-                offset2bincount(point.offset).min().tolist(), self.patch_size_max
-            )
+            self.patch_size = min(offset2bincount(point.offset).min().tolist(), self.patch_size_max)
 
         H = self.num_heads
         K = self.patch_size
@@ -457,9 +443,7 @@ class SerializedAttention(PointModule):
 
         if not self.enable_flash:
             # encode and reshape qkv: (N', K, 3, H, C') => (3, N', H, K, C')
-            q, k, v = (
-                qkv.reshape(-1, K, 3, H, C // H).permute(2, 0, 3, 1, 4).unbind(dim=0)
-            )
+            q, k, v = qkv.reshape(-1, K, 3, H, C // H).permute(2, 0, 3, 1, 4).unbind(dim=0)
             # attn
             if self.upcast_attention:
                 q = q.float()
@@ -579,9 +563,7 @@ class Block(PointModule):
                 drop=proj_drop,
             )
         )
-        self.drop_path = PointSequential(
-            DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
-        )
+        self.drop_path = PointSequential(DropPath(drop_path) if drop_path > 0.0 else nn.Identity())
 
     def forward(self, point: Point):
         shortcut = point.feat
@@ -645,9 +627,7 @@ class SerializedPooling(PointModule):
             "serialized_order",
             "serialized_inverse",
             "serialized_depth",
-        }.issubset(
-            point.keys()
-        ), "Run point.serialization() point cloud before SerializedPooling"
+        }.issubset(point.keys()), "Run point.serialization() point cloud before SerializedPooling"
 
         code = point.serialized_code >> pooling_depth * 3
         code_, cluster, counts = torch.unique(
@@ -668,9 +648,7 @@ class SerializedPooling(PointModule):
         inverse = torch.zeros_like(order).scatter_(
             dim=1,
             index=order,
-            src=torch.arange(0, code.shape[1], device=order.device).repeat(
-                code.shape[0], 1
-            ),
+            src=torch.arange(0, code.shape[1], device=order.device).repeat(code.shape[0], 1),
         )
 
         if self.shuffle_orders:
@@ -684,9 +662,7 @@ class SerializedPooling(PointModule):
             feat=torch_scatter.segment_csr(
                 self.proj(point.feat)[indices], idx_ptr, reduce=self.reduce
             ),
-            coord=torch_scatter.segment_csr(
-                point.coord[indices], idx_ptr, reduce="mean"
-            ),
+            coord=torch_scatter.segment_csr(point.coord[indices], idx_ptr, reduce="mean"),
             grid_coord=point.grid_coord[head_indices] >> pooling_depth,
             serialized_code=code,
             serialized_order=order,
@@ -837,9 +813,7 @@ class PointTransformerV3(PointModule):
         if pdnorm_bn:
             bn_layer = partial(
                 PDNorm,
-                norm_layer=partial(
-                    nn.BatchNorm1d, eps=1e-3, momentum=0.01, affine=pdnorm_affine
-                ),
+                norm_layer=partial(nn.BatchNorm1d, eps=1e-3, momentum=0.01, affine=pdnorm_affine),
                 conditions=pdnorm_conditions,
                 decouple=pdnorm_decouple,
                 adaptive=pdnorm_adaptive,
@@ -867,14 +841,10 @@ class PointTransformerV3(PointModule):
         )
 
         # encoder
-        enc_drop_path = [
-            x.item() for x in torch.linspace(0, drop_path, sum(enc_depths))
-        ]
+        enc_drop_path = [x.item() for x in torch.linspace(0, drop_path, sum(enc_depths))]
         self.enc = PointSequential()
         for s in range(self.num_stages):
-            enc_drop_path_ = enc_drop_path[
-                sum(enc_depths[:s]) : sum(enc_depths[: s + 1])
-            ]
+            enc_drop_path_ = enc_drop_path[sum(enc_depths[:s]) : sum(enc_depths[: s + 1])]
             enc = PointSequential()
             if s > 0:
                 enc.add(
@@ -916,15 +886,11 @@ class PointTransformerV3(PointModule):
 
         # decoder
         if not self.cls_mode:
-            dec_drop_path = [
-                x.item() for x in torch.linspace(0, drop_path, sum(dec_depths))
-            ]
+            dec_drop_path = [x.item() for x in torch.linspace(0, drop_path, sum(dec_depths))]
             self.dec = PointSequential()
             dec_channels = list(dec_channels) + [enc_channels[-1]]
             for s in reversed(range(self.num_stages - 1)):
-                dec_drop_path_ = dec_drop_path[
-                    sum(dec_depths[:s]) : sum(dec_depths[: s + 1])
-                ]
+                dec_drop_path_ = dec_drop_path[sum(dec_depths[:s]) : sum(dec_depths[: s + 1])]
                 dec_drop_path_.reverse()
                 dec = PointSequential()
                 dec.add(

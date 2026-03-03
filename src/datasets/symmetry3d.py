@@ -38,9 +38,7 @@ class Symmetry3DDataset(PointCloudDataset):
         self.data_dir = self.root_dir / "raw" / "3d-global-sym"
 
         if not self.data_dir.is_dir():
-            raise FileNotFoundError(
-                _DOWNLOAD_INSTRUCTIONS.format(data_dir=self.data_dir)
-            )
+            raise FileNotFoundError(_DOWNLOAD_INSTRUCTIONS.format(data_dir=self.data_dir))
 
     def __iter__(self):
         split_dir = self.data_dir / self.split

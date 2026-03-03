@@ -23,21 +23,21 @@ class TestAggregateResults:
         """Aggregate with known mock data should produce correct values."""
         results = [
             {
-                'scores': [0.0, 0.02, 0.5],
-                'uncanonicalizable': [True, True, False],
-                'spectral_gap': 0.1,
-                'multiplicity_info': {
-                    'n_repeating': 0,
-                    'n_non_repeating': 3,
+                "scores": [0.0, 0.02, 0.5],
+                "uncanonicalizable": [True, True, False],
+                "spectral_gap": 0.1,
+                "multiplicity_info": {
+                    "n_repeating": 0,
+                    "n_non_repeating": 3,
                 },
             },
             {
-                'scores': [0.0, 0.4, 0.6],
-                'uncanonicalizable': [True, False, False],
-                'spectral_gap': 0.2,
-                'multiplicity_info': {
-                    'n_repeating': 2,
-                    'n_non_repeating': 1,
+                "scores": [0.0, 0.4, 0.6],
+                "uncanonicalizable": [True, False, False],
+                "spectral_gap": 0.2,
+                "multiplicity_info": {
+                    "n_repeating": 2,
+                    "n_non_repeating": 1,
                 },
             },
         ]

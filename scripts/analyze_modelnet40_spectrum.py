@@ -17,7 +17,7 @@ from tqdm import tqdm  # noqa: E402
 
 from src.datasets.modelnet import ModelNet40Dataset  # noqa: E402
 from src.preprocessing import center_and_normalize, random_subsample  # noqa: E402
-from src.spectral_core import analyze_spectrum  # noqa: E402
+from src.spectral_core import analyze_spectrum, uncanonicalizability_threshold  # noqa: E402
 
 
 def process_shape(name, points, n_points, n_eigs, n_neighbors, seed):
@@ -47,7 +47,9 @@ def main():
     parser.add_argument("--n-neighbors", type=int, default=12, help="k-NN neighbors for graph")
     parser.add_argument("--n-jobs", type=int, default=4, help="Number of parallel jobs")
     parser.add_argument("--download", action="store_true", help="Download ModelNet40 if missing")
-    parser.add_argument("--output-dir", type=str, default="results/modelnet40_analysis", help="Output directory")
+    parser.add_argument(
+        "--output-dir", type=str, default="results/modelnet40_analysis", help="Output directory"
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -81,9 +83,7 @@ def main():
     # Process shapes in parallel
     print(f"Analyzing spectra with {args.n_jobs} parallel jobs...")
     results = Parallel(n_jobs=args.n_jobs, backend="loky")(
-        delayed(process_shape)(
-            name, points, args.n_points, args.n_eigs, args.n_neighbors, seed=idx
-        )
+        delayed(process_shape)(name, points, args.n_points, args.n_eigs, args.n_neighbors, seed=idx)
         for idx, (name, points) in enumerate(tqdm(all_shapes, desc="Processing"))
     )
 
@@ -151,7 +151,7 @@ def main():
     # ─── Build Statistics Dictionary ───────────────────────────────────────────
 
     # Compute dynamic threshold (based on n_points)
-    threshold = 5.0 / np.sqrt(args.n_points)
+    threshold = uncanonicalizability_threshold(args.n_points)
 
     stats = {
         "dataset": "ModelNet40",
@@ -244,7 +244,11 @@ def main():
 
     # Plot 2: Multiplicity distribution bar chart
     fig, ax = plt.subplots(figsize=(8, 6))
-    categories = ["Multiplicity 1\n(Simple)", "Multiplicity 2\n(Double)", "Multiplicity 3+\n(Higher)"]
+    categories = [
+        "Multiplicity 1\n(Simple)",
+        "Multiplicity 2\n(Double)",
+        "Multiplicity 3+\n(Higher)",
+    ]
     values = [avg_mult_1, avg_mult_2, avg_mult_3plus]
     bars = ax.bar(categories, values, color=["#2ecc71", "#3498db", "#e74c3c"])
     ax.set_ylabel(f"Average Count (out of {args.n_eigs} eigenvalues)")
