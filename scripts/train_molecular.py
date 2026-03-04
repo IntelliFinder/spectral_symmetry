@@ -29,7 +29,7 @@ from src.experiments.molecular.dataset import (  # noqa: E402
     CANONICALIZATION_METHODS,
     MolecularLapPEDataset,
 )
-from src.experiments.molecular.model import GINLapPE  # noqa: E402
+from src.experiments.molecular.model import GCNLapPE, GINLapPE  # noqa: E402
 from src.training import seed_everything, worker_init_fn  # noqa: E402
 
 
@@ -136,6 +136,13 @@ def main():
     parser.add_argument("--n-eigs", type=int, default=8)
 
     # Model
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gin",
+        choices=["gin", "gcn"],
+        help="Model backbone: gin (GINConv, 2-layer MLP) or gcn (GCNConv, single linear)",
+    )
     parser.add_argument("--hidden-dim", type=int, default=256)
     parser.add_argument("--num-layers", type=int, default=5)
     parser.add_argument("--dropout", type=float, default=0.5)
@@ -227,7 +234,8 @@ def main():
     atom_dim = sample.x.shape[1] if sample.x is not None else 9
 
     # Model
-    model = GINLapPE(
+    model_cls = GINLapPE if args.model == "gin" else GCNLapPE
+    model = model_cls(
         atom_dim=atom_dim,
         pe_dim=args.n_eigs,
         hidden_dim=args.hidden_dim,
@@ -306,6 +314,7 @@ def main():
     # Save results
     results = {
         "dataset": args.dataset,
+        "model": args.model,
         "canonicalization": args.canonicalization,
         "n_eigs": args.n_eigs,
         "hidden_dim": args.hidden_dim,
