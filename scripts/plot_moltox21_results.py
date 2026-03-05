@@ -55,12 +55,16 @@ CANON_LABELS = {
 }
 
 
-def load_epoch_logs(results_dir):
+def _exp1_dir_name(model):
+    return "exp1_param_efficiency" if model == "gin" else f"exp1_param_efficiency_{model}"
+
+
+def load_epoch_logs(results_dir, model="gin"):
     """Load epoch logs from exp1_param_efficiency.
 
     Returns dict: {(canon, hidden_dim): [list of epoch_log arrays]}
     """
-    exp_dir = os.path.join(results_dir, "exp1_param_efficiency")
+    exp_dir = os.path.join(results_dir, _exp1_dir_name(model))
     logs = defaultdict(list)
 
     for run_dir in sorted(os.listdir(exp_dir)):
@@ -408,17 +412,25 @@ def main():
         default=200,
         help="Number of graphs for benchmark",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gin",
+        choices=["gin", "gcn"],
+        help="Model backbone (default: gin)",
+    )
     args = parser.parse_args()
 
     if args.output_dir is None:
-        args.output_dir = os.path.join(args.results_dir, "moltox21_plots")
+        suffix = "" if args.model == "gin" else f"_{args.model}"
+        args.output_dir = os.path.join(args.results_dir, f"moltox21_plots{suffix}")
     os.makedirs(args.output_dir, exist_ok=True)
 
     print("=" * 60)
-    print("Part 1: Per-hidden-dim convergence plots")
+    print(f"Part 1: Per-hidden-dim convergence plots [{args.model.upper()}]")
     print("=" * 60)
 
-    logs = load_epoch_logs(args.results_dir)
+    logs = load_epoch_logs(args.results_dir, model=args.model)
     print(f"Loaded {sum(len(v) for v in logs.values())} epoch logs")
     if logs:
         plot_convergence_per_hdim(logs, args.output_dir)

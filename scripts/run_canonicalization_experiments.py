@@ -41,6 +41,14 @@ HIDDEN_DIMS = [32, 64, 128, 256, 512]
 SEEDS = [0, 1, 2, 3, 4]
 
 
+def _exp1_dir_name(model):
+    return "exp1_param_efficiency" if model == "gin" else f"exp1_param_efficiency_{model}"
+
+
+def _exp23_dir_name(model):
+    return "exp23_subset_convergence" if model == "gin" else f"exp23_subset_convergence_{model}"
+
+
 def build_exp1_commands(args):
     """Experiment 1: Parameter Efficiency.
 
@@ -50,7 +58,7 @@ def build_exp1_commands(args):
     for canon, hdim, seed in itertools.product(CANONICALIZATIONS, HIDDEN_DIMS, SEEDS):
         save_dir = os.path.join(
             args.results_dir,
-            "exp1_param_efficiency",
+            _exp1_dir_name(args.model),
             f"{canon}_h{hdim}_s{seed}",
         )
         cmd = [
@@ -78,6 +86,8 @@ def build_exp1_commands(args):
             str(seed),
             "--save-dir",
             save_dir,
+            "--model",
+            args.model,
         ]
         commands.append(cmd)
     return commands
@@ -92,7 +102,7 @@ def build_exp23_commands(args):
     for canon, seed in itertools.product(CANONICALIZATIONS, SEEDS):
         save_dir = os.path.join(
             args.results_dir,
-            "exp23_subset_convergence",
+            _exp23_dir_name(args.model),
             f"{canon}_s{seed}",
         )
         cmd = [
@@ -121,6 +131,8 @@ def build_exp23_commands(args):
             "--save-dir",
             save_dir,
             "--save-predictions",
+            "--model",
+            args.model,
         ]
         commands.append(cmd)
     return commands
@@ -183,6 +195,13 @@ def main():
         "--hidden-dim", type=int, default=None, help="Run only this hidden dim (exp1)"
     )
     parser.add_argument("--seed", type=int, default=None, help="Run only this seed")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gin",
+        choices=["gin", "gcn"],
+        help="Model backbone (default: gin)",
+    )
     args = parser.parse_args()
 
     commands = []

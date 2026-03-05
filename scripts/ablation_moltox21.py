@@ -154,14 +154,22 @@ def load_exp1_results(exp1_dir):
 # ── Part 1: Finer Stratification ────────────────────────────────────────────
 
 
-def part1_stratification(base_dir, output_dir):
+def _exp1_dir_name(model):
+    return "exp1_param_efficiency" if model == "gin" else f"exp1_param_efficiency_{model}"
+
+
+def _exp23_dir_name(model):
+    return "exp23_subset_convergence" if model == "gin" else f"exp23_subset_convergence_{model}"
+
+
+def part1_stratification(base_dir, output_dir, model="gin"):
     """Stratified analysis by uncanonical eigenvector count."""
     print("\n" + "=" * 70)
-    print("Part 1: Finer Stratification (4-bin)")
+    print(f"Part 1: Finer Stratification (4-bin) [{model.upper()}]")
     print("=" * 70)
 
     audit_dir = os.path.join(base_dir, "test_split_audit")
-    exp23_dir = os.path.join(base_dir, "exp23_subset_convergence")
+    exp23_dir = os.path.join(base_dir, _exp23_dir_name(model))
 
     uncanon_map = load_audit(audit_dir)
     predictions = load_exp23_predictions(exp23_dir)
@@ -246,7 +254,8 @@ def part1_stratification(base_dir, output_dir):
 
     ax.set_ylabel("Test ROC-AUC")
     ax.set_title(
-        "Stratified Test ROC-AUC by Uncanonical Eigenvector Count\n(ogbg-moltox21, h=256, 5 seeds)"
+        f"Stratified Test ROC-AUC by Uncanonical Eigenvector Count\n"
+        f"(ogbg-moltox21, {model.upper()}, h=256, 5 seeds)"
     )
     ax.set_xticks(x)
     ax.set_xticklabels([f"{bl}\n({len(bin_indices[bl])} graphs)" for bl in bin_labels])
@@ -263,14 +272,14 @@ def part1_stratification(base_dir, output_dir):
 # ── Part 2: H-dim Behavior ──────────────────────────────────────────────────
 
 
-def part2_hdim_analysis(base_dir, output_dir, hdims=None, suffix=""):
+def part2_hdim_analysis(base_dir, output_dir, hdims=None, suffix="", model="gin"):
     """Hidden-dim vs ROC-AUC analysis from exp1 data."""
     label = "Extended " if suffix else ""
     print(f"\n{'=' * 70}")
-    print(f"Part 2: {label}H-dim Behavior Investigation")
+    print(f"Part 2: {label}H-dim Behavior Investigation [{model.upper()}]")
     print("=" * 70)
 
-    exp1_dir = os.path.join(base_dir, "exp1_param_efficiency")
+    exp1_dir = os.path.join(base_dir, _exp1_dir_name(model))
     results = load_exp1_results(exp1_dir)
 
     if hdims is None:
@@ -315,7 +324,7 @@ def part2_hdim_analysis(base_dir, output_dir, hdims=None, suffix=""):
     ax.set_xticklabels([str(h) for h in hdims])
     ax.set_xlabel("Hidden Dimension")
     ax.set_ylabel("Test ROC-AUC")
-    ax.set_title("Hidden Dimension vs Test ROC-AUC\n(ogbg-moltox21, 5 seeds)")
+    ax.set_title(f"Hidden Dimension vs Test ROC-AUC\n(ogbg-moltox21, {model.upper()}, 5 seeds)")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -423,13 +432,13 @@ def part2_hdim_analysis(base_dir, output_dir, hdims=None, suffix=""):
 # ── Part 3: Low H-dim Training ──────────────────────────────────────────────
 
 
-def part3_low_hdim_training(base_dir, output_dir, data_dir="data"):
+def part3_low_hdim_training(base_dir, output_dir, data_dir="data", model="gin"):
     """Train at low hidden dims and re-run extended analysis."""
     print(f"\n{'=' * 70}")
-    print("Part 3: Low H-dim Training Runs")
+    print(f"Part 3: Low H-dim Training Runs [{model.upper()}]")
     print("=" * 70)
 
-    exp1_dir = os.path.join(base_dir, "exp1_param_efficiency")
+    exp1_dir = os.path.join(base_dir, _exp1_dir_name(model))
 
     # Training config matching existing exp1 runs
     config = {
@@ -473,6 +482,8 @@ def part3_low_hdim_training(base_dir, output_dir, data_dir="data"):
             str(seed),
             "--save-dir",
             save_dir,
+            "--model",
+            model,
         ]
         commands.append((f"{canon}_h{hdim}_s{seed}", cmd))
 
@@ -491,7 +502,7 @@ def part3_low_hdim_training(base_dir, output_dir, data_dir="data"):
 
     # Re-run Part 2 with extended h-dims
     print("\nRunning extended h-dim analysis...")
-    part2_hdim_analysis(base_dir, output_dir, hdims=ALL_HDIMS, suffix="_extended")
+    part2_hdim_analysis(base_dir, output_dir, hdims=ALL_HDIMS, suffix="_extended", model=model)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -529,7 +540,21 @@ def main():
         action="store_true",
         help="Run Part 3 only (training + extended analysis)",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gin",
+        choices=["gin", "gcn"],
+        help="Model backbone (default: gin)",
+    )
     args = parser.parse_args()
+
+    # Adjust output dir for non-gin models
+    if (
+        args.model != "gin"
+        and args.output_dir == "results/canonicalization_experiments/moltox21_ablation"
+    ):
+        args.output_dir = f"results/canonicalization_experiments/moltox21_ablation_{args.model}"
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -538,11 +563,11 @@ def main():
         sys.exit(1)
 
     if not args.part3_only:
-        part1_stratification(args.base_dir, args.output_dir)
-        part2_hdim_analysis(args.base_dir, args.output_dir)
+        part1_stratification(args.base_dir, args.output_dir, model=args.model)
+        part2_hdim_analysis(args.base_dir, args.output_dir, model=args.model)
 
     if not args.skip_training:
-        part3_low_hdim_training(args.base_dir, args.output_dir, args.data_dir)
+        part3_low_hdim_training(args.base_dir, args.output_dir, args.data_dir, model=args.model)
 
 
 if __name__ == "__main__":
