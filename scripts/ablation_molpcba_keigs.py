@@ -61,7 +61,8 @@ K_VALUES = [1, 3, 6, 9, 12, 15]
 HIDDEN_DIMS = [32, 256]
 MODELS = ["gin", "gcn"]
 SEEDS = [0, 1, 2]
-MAX_PARALLEL = 6  # concurrent training jobs on single GPU
+CACHE_K = 15  # precompute this many eigenvectors, slice at runtime
+MAX_PARALLEL = 6  # concurrent training jobs per GPU
 
 BASE_DIR = "results/molpcba_keigs_ablation"
 PLOT_DIR = os.path.join(BASE_DIR, "plots")
@@ -147,6 +148,8 @@ def build_commands(models, canons, k_values, hdims, seeds):
             canon,
             "--n-eigs",
             str(k),
+            "--cache-n-eigs",
+            str(CACHE_K),
             "--hidden-dim",
             str(h),
             "--num-layers",
@@ -167,10 +170,24 @@ def build_commands(models, canons, k_values, hdims, seeds):
     return commands, skipped
 
 
-def run_training(commands, dry_run=False, max_parallel=MAX_PARALLEL):
-    """Execute training commands with up to max_parallel concurrent jobs."""
+def run_training(commands, dry_run=False, max_parallel=MAX_PARALLEL, gpus=None):
+    """Execute training commands with up to max_parallel concurrent jobs per GPU.
+
+    Parameters
+    ----------
+    gpus : list of int or None
+        GPU device IDs to distribute across (e.g. [0, 1, 2, 3, 4]).
+        If None, no CUDA_VISIBLE_DEVICES is set (use default).
+    """
+    n_gpus = len(gpus) if gpus else 1
+    total_parallel = max_parallel * n_gpus
     print(f"\n{'=' * 70}")
-    print(f"Training Phase ({max_parallel} parallel workers)")
+    if gpus:
+        print(
+            f"Training Phase ({max_parallel} workers x {n_gpus} GPUs = {total_parallel} parallel)"
+        )
+    else:
+        print(f"Training Phase ({max_parallel} parallel workers)")
     print(f"{'=' * 70}")
     print(f"  {len(commands)} runs to launch")
 
@@ -181,28 +198,42 @@ def run_training(commands, dry_run=False, max_parallel=MAX_PARALLEL):
             print(f"      {' '.join(cmd)}")
         return
 
-    active = {}  # pid -> (name, Popen)
+    active = {}  # pid -> (name, Popen, log_f, idx, gpu_id)
+    gpu_counts = {g: 0 for g in (gpus or [None])}  # track jobs per GPU
     queue = list(enumerate(commands))
     done = 0
     total = len(commands)
 
+    def _next_gpu():
+        """Return GPU with fewest active jobs, or None."""
+        return min(gpu_counts, key=gpu_counts.get)
+
     while queue or active:
-        # Launch new jobs up to max_parallel
-        while queue and len(active) < max_parallel:
+        # Launch new jobs up to max_parallel per GPU
+        while queue:
+            gpu = _next_gpu()
+            if gpu_counts[gpu] >= max_parallel:
+                break
             i, (name, cmd) = queue.pop(0)
-            print(f"  [START {i + 1}/{total}] {name}")
+            gpu_label = f"GPU {gpu}" if gpu is not None else "default"
+            print(f"  [START {i + 1}/{total}] {name} [{gpu_label}]")
             log_path = os.path.join(save_dir_for(*_parse_name(name)), "train.log")
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             log_f = open(log_path, "w")
-            proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT)
-            active[proc.pid] = (name, proc, log_f, i)
+            env = os.environ.copy()
+            if gpu is not None:
+                env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+            proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT, env=env)
+            active[proc.pid] = (name, proc, log_f, i, gpu)
+            gpu_counts[gpu] += 1
 
         # Wait for any child to finish
         if active:
             pid, status = os.waitpid(-1, 0)
             if pid in active:
-                name, proc, log_f, idx = active.pop(pid)
+                name, proc, log_f, idx, gpu = active.pop(pid)
                 log_f.close()
+                gpu_counts[gpu] -= 1
                 done += 1
                 rc = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
                 if rc != 0:
@@ -665,6 +696,19 @@ def main():
         default=None,
         help="Filter to specific seed(s)",
     )
+    parser.add_argument(
+        "--gpus",
+        type=int,
+        nargs="+",
+        default=None,
+        help="GPU device IDs to distribute jobs across (e.g. --gpus 0 1 2 3 4)",
+    )
+    parser.add_argument(
+        "--workers-per-gpu",
+        type=int,
+        default=MAX_PARALLEL,
+        help=f"Max concurrent jobs per GPU (default: {MAX_PARALLEL})",
+    )
 
     args = parser.parse_args()
 
@@ -698,7 +742,12 @@ def main():
     if not skip_training:
         commands, skipped = build_commands(models, canons, k_values, hdims, seeds)
         print(f"  {skipped} already exist, {len(commands)} to run")
-        run_training(commands, dry_run=args.dry_run)
+        run_training(
+            commands,
+            dry_run=args.dry_run,
+            max_parallel=args.workers_per_gpu,
+            gpus=args.gpus,
+        )
         if args.dry_run:
             return
 

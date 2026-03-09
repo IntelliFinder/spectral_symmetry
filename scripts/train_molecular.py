@@ -150,6 +150,13 @@ def main():
     )
     parser.add_argument("--n-eigs", type=int, default=8)
     parser.add_argument(
+        "--cache-n-eigs",
+        type=int,
+        default=None,
+        help="Precompute this many eigenvectors for caching, then slice to --n-eigs at runtime. "
+        "Avoids redundant preprocessing when sweeping k values.",
+    )
+    parser.add_argument(
         "--pe-type",
         type=str,
         default="eigvec",
@@ -216,6 +223,7 @@ def main():
         canonicalization=args.canonicalization,
         n_eigs=args.n_eigs,
         data_dir=args.data_dir,
+        cache_n_eigs=args.cache_n_eigs,
     )
 
     split_idx = mol_dataset.get_split_indices()

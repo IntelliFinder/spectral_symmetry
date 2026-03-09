@@ -178,6 +178,7 @@ class MolecularLapPEDataset:
         data_dir="data",
         cache_dir=None,
         split=None,
+        cache_n_eigs=None,
     ):
         if canonicalization not in CANONICALIZATION_METHODS:
             raise ValueError(
@@ -189,6 +190,10 @@ class MolecularLapPEDataset:
         self.canonicalization = canonicalization
         self.n_eigs = n_eigs
         self.split = split
+
+        # cache_n_eigs: compute/cache this many eigenvectors, then slice to n_eigs
+        # at runtime. Avoids redundant preprocessing when sweeping k values.
+        self._cache_k = cache_n_eigs if cache_n_eigs is not None else n_eigs
 
         # Load OGB dataset
         orig = _patch_torch_load()
@@ -208,10 +213,10 @@ class MolecularLapPEDataset:
         else:
             self.indices = list(range(len(self.ogb_dataset)))
 
-        # Cache directory
+        # Cache directory — keyed on cache_k so all k<=cache_k share the same cache
         if cache_dir is None:
             cache_dir = os.path.join(
-                data_dir, "lappe_cache", f"{dataset_name}_{canonicalization}_k{n_eigs}"
+                data_dir, "lappe_cache", f"{dataset_name}_{canonicalization}_k{self._cache_k}"
             )
         self.cache_dir = cache_dir
 
@@ -243,7 +248,7 @@ class MolecularLapPEDataset:
             pe, evals, ok = _compute_lappe_for_graph(
                 edge_index_np,
                 num_nodes,
-                self.n_eigs,
+                self._cache_k,
                 self.canonicalization,
                 idx,
             )
@@ -293,6 +298,11 @@ class MolecularLapPEDataset:
                 "random_augmented",
                 graph_idx,
             )
+
+        # Truncate to n_eigs if cache has more columns
+        k = self.n_eigs
+        pe = pe[:, :k]
+        evals = evals[:k]
 
         # Build output Data object
         out = Data(
@@ -356,6 +366,11 @@ class MolecularLapPEDataset:
                 "random_augmented",
                 graph_idx,
             )
+
+        # Truncate to n_eigs if cache has more columns
+        k = self.n_eigs
+        pe = pe[:, :k]
+        evals = evals[:k]
 
         out = Data(
             x=data.x.float() if data.x is not None else torch.zeros(data.num_nodes, 9),
