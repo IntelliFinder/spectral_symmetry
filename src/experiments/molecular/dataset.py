@@ -120,7 +120,7 @@ def _compute_lappe_for_graph(edge_index_np, num_nodes, n_eigs, method, graph_idx
     if len(eigenvalues) == 0:
         return pe, evals_out, False
 
-    # Apply canonicalization (random_augmented is deferred to __getitem__)
+    # Apply canonicalization (random_augmented stores raw eigvecs; signs applied at runtime)
     if method != "random_augmented":
         eigenvectors = _apply_canonicalization(eigenvectors, eigenvalues, method, graph_idx)
 
@@ -238,7 +238,7 @@ class MolecularLapPEDataset:
         cache_path = self._cache_path()
 
         # Fast path: cache already exists
-        if os.path.exists(cache_path) and self.canonicalization != "random_augmented":
+        if os.path.exists(cache_path):
             with open(cache_path, "rb") as f:
                 self._pe_data = pickle.load(f)
             return
@@ -248,7 +248,7 @@ class MolecularLapPEDataset:
 
         with filelock.FileLock(lock_path, timeout=7200):
             # Re-check inside lock — another process may have computed it
-            if os.path.exists(cache_path) and self.canonicalization != "random_augmented":
+            if os.path.exists(cache_path):
                 with open(cache_path, "rb") as f:
                     self._pe_data = pickle.load(f)
                 return
@@ -276,15 +276,14 @@ class MolecularLapPEDataset:
                 print(f"  LapPE: {n_failed} graphs failed (using zero PE)")
 
             # Atomic write: write to temp file, then rename
-            if self.canonicalization != "random_augmented":
-                fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, suffix=".pkl")
-                try:
-                    with os.fdopen(fd, "wb") as f:
-                        pickle.dump(self._pe_data, f, protocol=4)
-                    os.replace(tmp_path, cache_path)
-                except BaseException:
-                    os.unlink(tmp_path)
-                    raise
+            fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, suffix=".pkl")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    pickle.dump(self._pe_data, f, protocol=4)
+                os.replace(tmp_path, cache_path)
+            except BaseException:
+                os.unlink(tmp_path)
+                raise
 
     def get_split_indices(self):
         """Return OGB split indices."""
@@ -309,22 +308,15 @@ class MolecularLapPEDataset:
 
         pe, evals = self._pe_data[graph_idx]
 
-        # For random_augmented, recompute with fresh random signs each time
-        if self.canonicalization == "random_augmented":
-            edge_index_np = data.edge_index.numpy()
-            num_nodes = int(data.num_nodes)
-            pe, evals, _ = _compute_lappe_for_graph(
-                edge_index_np,
-                num_nodes,
-                self.n_eigs,
-                "random_augmented",
-                graph_idx,
-            )
-
         # Truncate to n_eigs if cache has more columns
         k = self.n_eigs
         pe = pe[:, :k]
         evals = evals[:k]
+
+        # For random_augmented, apply random sign flips to cached eigenvectors
+        if self.canonicalization == "random_augmented":
+            signs = np.where(np.random.random(k) < 0.5, -1.0, 1.0).astype(np.float32)
+            pe = pe * signs  # broadcast (num_nodes, k) * (k,)
 
         # Build output Data object
         out = Data(
@@ -378,21 +370,15 @@ class MolecularLapPEDataset:
         data = self.ogb_dataset[graph_idx]
         pe, evals = self._pe_data[graph_idx]
 
-        if self.canonicalization == "random_augmented" and augment:
-            edge_index_np = data.edge_index.numpy()
-            num_nodes = int(data.num_nodes)
-            pe, evals, _ = _compute_lappe_for_graph(
-                edge_index_np,
-                num_nodes,
-                self.n_eigs,
-                "random_augmented",
-                graph_idx,
-            )
-
         # Truncate to n_eigs if cache has more columns
         k = self.n_eigs
         pe = pe[:, :k]
         evals = evals[:k]
+
+        # For random_augmented, apply random sign flips during training only
+        if self.canonicalization == "random_augmented" and augment:
+            signs = np.where(np.random.random(k) < 0.5, -1.0, 1.0).astype(np.float32)
+            pe = pe * signs  # broadcast (num_nodes, k) * (k,)
 
         out = Data(
             x=data.x.float() if data.x is not None else torch.zeros(data.num_nodes, 9),

@@ -62,7 +62,7 @@ HIDDEN_DIMS = [32, 256]
 MODELS = ["gin", "gcn"]
 SEEDS = [0, 1, 2]
 CACHE_K = 15  # precompute this many eigenvectors, slice at runtime
-MAX_PARALLEL = 6  # concurrent training jobs per GPU
+MAX_PARALLEL = 4  # concurrent training jobs per GPU (safe for h=256 on 48GB A40)
 
 BASE_DIR = "results/molpcba_keigs_ablation"
 PLOT_DIR = os.path.join(BASE_DIR, "plots")
@@ -140,10 +140,6 @@ def prewarm_caches(canons, dataset="ogbg-molpcba", data_dir="data"):
     print(f"{'=' * 70}")
 
     for canon in canons:
-        if canon == "random_augmented":
-            print(f"  Skipping {canon} (non-deterministic, never cached)")
-            continue
-
         cache_dir = os.path.join(data_dir, "lappe_cache", f"{dataset}_{canon}_k{CACHE_K}")
         cache_path = os.path.join(cache_dir, "lappe.pkl")
 

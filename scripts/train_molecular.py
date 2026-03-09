@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -183,6 +183,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--weight-decay", type=float, default=1e-5)
 
     # Output
     parser.add_argument("--save-dir", type=str, default=None)
@@ -288,7 +289,7 @@ def main():
     print(f"Model parameters: {n_params:,}")
 
     # Optimizer
-    optimizer = Adam(model.parameters(), lr=args.lr)
+    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     # Evaluator
