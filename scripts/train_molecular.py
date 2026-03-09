@@ -33,6 +33,21 @@ from src.experiments.molecular.model import GCNLapPE, GINLapPE  # noqa: E402
 from src.training import seed_everything, worker_init_fn  # noqa: E402
 
 
+def transform_pe(batch, pe_type):
+    """Transform PE features based on pe_type.
+
+    - eigvec: use eigenvector values as-is (x_pe)
+    - eigval: use eigenvalues broadcast to nodes (x_evals)
+    - both: concatenate [eigvec, eigval]
+    """
+    if pe_type == "eigvec":
+        return batch.x_pe
+    elif pe_type == "eigval":
+        return batch.x_evals
+    else:  # both
+        return torch.cat([batch.x_pe, batch.x_evals], dim=-1)
+
+
 def get_evaluator(dataset_name):
     """Return the OGB evaluator for the dataset."""
     from ogb.graphproppred import Evaluator
@@ -40,7 +55,7 @@ def get_evaluator(dataset_name):
     return Evaluator(name=dataset_name)
 
 
-def train_one_epoch(model, loader, optimizer, device):
+def train_one_epoch(model, loader, optimizer, device, pe_type="eigvec"):
     """Train for one epoch. Returns average loss."""
     model.train()
     total_loss = 0.0
@@ -49,7 +64,7 @@ def train_one_epoch(model, loader, optimizer, device):
     for batch in loader:
         batch = batch.to(device)
         x_atom = batch.x
-        x_pe = batch.x_pe
+        x_pe = transform_pe(batch, pe_type)
         logits = model(x_atom, x_pe, batch.edge_index, batch.batch)
 
         # BCEWithLogitsLoss with NaN masking (OGB has missing labels)
@@ -72,7 +87,7 @@ def train_one_epoch(model, loader, optimizer, device):
 
 
 @torch.no_grad()
-def evaluate(model, loader, evaluator, device, dataset_name):
+def evaluate(model, loader, evaluator, device, dataset_name, pe_type="eigvec"):
     """Evaluate and return metric (ROC-AUC or AP).
 
     Returns
@@ -89,7 +104,7 @@ def evaluate(model, loader, evaluator, device, dataset_name):
 
     for batch in loader:
         batch = batch.to(device)
-        logits = model(batch.x, batch.x_pe, batch.edge_index, batch.batch)
+        logits = model(batch.x, transform_pe(batch, pe_type), batch.edge_index, batch.batch)
         y_true_list.append(batch.y.cpu().numpy())
         y_pred_list.append(logits.cpu().numpy())
         if hasattr(batch, "graph_idx"):
@@ -134,6 +149,14 @@ def main():
         choices=list(CANONICALIZATION_METHODS),
     )
     parser.add_argument("--n-eigs", type=int, default=8)
+    parser.add_argument(
+        "--pe-type",
+        type=str,
+        default="eigvec",
+        choices=["eigvec", "eigval", "both"],
+        help="PE features: eigvec (eigenvectors), eigval (eigenvalues broadcast to nodes), "
+        "both (concatenation)",
+    )
 
     # Model
     parser.add_argument(
@@ -233,11 +256,19 @@ def main():
     sample = mol_dataset.ogb_dataset[0]
     atom_dim = sample.x.shape[1] if sample.x is not None else 9
 
+    # Determine PE dimension based on pe_type
+    if args.pe_type == "eigvec":
+        pe_dim = args.n_eigs
+    elif args.pe_type == "eigval":
+        pe_dim = args.n_eigs
+    else:  # both
+        pe_dim = args.n_eigs * 2
+
     # Model
     model_cls = GINLapPE if args.model == "gin" else GCNLapPE
     model = model_cls(
         atom_dim=atom_dim,
-        pe_dim=args.n_eigs,
+        pe_dim=pe_dim,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_tasks=num_tasks,
@@ -264,8 +295,10 @@ def main():
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.time()
 
-        train_loss = train_one_epoch(model, train_loader, optimizer, device)
-        val_metric, _, _, _ = evaluate(model, val_loader, evaluator, device, args.dataset)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, args.pe_type)
+        val_metric, _, _, _ = evaluate(
+            model, val_loader, evaluator, device, args.dataset, args.pe_type
+        )
 
         scheduler.step()
         epoch_time = time.time() - epoch_start
@@ -297,13 +330,14 @@ def main():
 
     # Final evaluation with best model
     model.load_state_dict(torch.load(save_dir / "best_model.pt", weights_only=True))
-    final_val, _, _, _ = evaluate(model, val_loader, evaluator, device, args.dataset)
+    final_val, _, _, _ = evaluate(model, val_loader, evaluator, device, args.dataset, args.pe_type)
     final_test, y_true, y_pred, graph_indices = evaluate(
         model,
         test_loader,
         evaluator,
         device,
         args.dataset,
+        args.pe_type,
     )
 
     metric_name = "rocauc" if "moltox21" in args.dataset else "ap"
@@ -317,6 +351,7 @@ def main():
         "model": args.model,
         "canonicalization": args.canonicalization,
         "n_eigs": args.n_eigs,
+        "pe_type": args.pe_type,
         "hidden_dim": args.hidden_dim,
         "num_layers": args.num_layers,
         "dropout": args.dropout,

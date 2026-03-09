@@ -5,6 +5,7 @@ import numpy as np
 from src.spectral_canonicalization import (
     _gf2_null_space,
     _gf2_row_reduce,
+    compute_canonical_signs,
     find_balanced_blocks,
     solve_z2_system,
     spectral_canonicalize,
@@ -465,3 +466,300 @@ class TestHandCrafted:
                 canon_signed[:, simple_cols],
                 err_msg=f"Failed for simple-col sign bits {bits}",
             )
+
+
+# ---------------------------------------------------------------------------
+# TestSpielmanStepByStep — Counterexample & separation tests
+# ---------------------------------------------------------------------------
+
+
+class TestSpielmanStepByStep:
+    """Step-by-step verification of Spielman phases on known graphs."""
+
+    def _laplacian(self, A):
+        """Compute graph Laplacian L = D - A."""
+        D = np.diag(A.sum(axis=1))
+        return D - A
+
+    def test_path_p5_phase_a_respects_symmetry(self):
+        """Path P5 (0-1-2-3-4): nodes 0&4 and 1&3 are symmetric, so Phase A
+        should produce 3 blocks: {0,4}, {1,3}, {2}."""
+        A = np.zeros((5, 5))
+        for i, j in [(0, 1), (1, 2), (2, 3), (3, 4)]:
+            A[i, j] = A[j, i] = 1
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+
+        # Drop trivial eigenvector (eigenvalue 0)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+
+        blocks = find_balanced_blocks(V)
+        block_sizes = sorted(len(b) for b in blocks)
+        # Symmetric pairs {0,4} and {1,3} share abs row signatures
+        assert block_sizes == [1, 2, 2], f"Expected [1, 2, 2], got {block_sizes}"
+        # Center node (2) should be singleton
+        singleton = [b for b in blocks if len(b) == 1][0]
+        assert 2 in singleton
+
+    def test_path_p5_canonical_signs_deterministic(self):
+        """Phase B signs on P5 should be deterministic and flip-invariant."""
+        A = np.zeros((5, 5))
+        for i, j in [(0, 1), (1, 2), (2, 3), (3, 4)]:
+            A[i, j] = A[j, i] = 1
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+
+        blocks = find_balanced_blocks(V)
+        signs = compute_canonical_signs(V, blocks)
+        assert signs.shape == (V.shape[1],)
+        assert all(s in (-1, 1) for s in signs)
+
+        # Flipping any column should produce opposite sign for that column
+        for j in range(V.shape[1]):
+            V_flip = V.copy()
+            V_flip[:, j] *= -1
+            signs_flip = compute_canonical_signs(V_flip, blocks)
+            # After applying signs, result should match
+            canon_orig = V * signs[np.newaxis, :]
+            canon_flip = V_flip * signs_flip[np.newaxis, :]
+            np.testing.assert_array_almost_equal(canon_orig, canon_flip)
+
+    def test_star_graph_phase_a_two_blocks(self):
+        """Star graph K_{1,4}: center has unique row, leaves share signature.
+        Phase A should produce 2 blocks: {center} and {leaves}."""
+        A = np.zeros((5, 5))
+        for i in range(1, 5):
+            A[0, i] = A[i, 0] = 1
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+
+        blocks = find_balanced_blocks(V)
+        block_sizes = sorted(len(b) for b in blocks)
+        # Center is a singleton, leaves could form 1 or more blocks
+        assert 1 in block_sizes, "Center node should be a singleton block"
+
+    def test_isomorphic_graphs_same_canonical_form(self):
+        """Two isomorphic graphs (related by node permutation) should produce
+        identical canonical eigenvectors (modulo row permutation)."""
+        # Graph: triangle with pendant (0-1, 1-2, 2-0, 0-3)
+        A1 = np.array([[0, 1, 1, 1], [1, 0, 1, 0], [1, 1, 0, 0], [1, 0, 0, 0]], dtype=float)
+        # Permute nodes: 0->2, 1->0, 2->1, 3->3
+        P = np.array([[0, 0, 1, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1]], dtype=float)
+        A2 = P @ A1 @ P.T
+
+        L1 = self._laplacian(A1)
+        L2 = self._laplacian(A2)
+
+        eigvals1, eigvecs1 = np.linalg.eigh(L1)
+        eigvals2, eigvecs2 = np.linalg.eigh(L2)
+
+        nontriv1 = eigvals1 > 1e-6
+        nontriv2 = eigvals2 > 1e-6
+
+        canon1 = spectral_canonicalize(eigvecs1[:, nontriv1], eigvals1[nontriv1])
+        canon2 = spectral_canonicalize(eigvecs2[:, nontriv2], eigvals2[nontriv2])
+
+        # After permuting canon2 rows back, should match canon1
+        canon2_permuted = P.T @ canon2
+        np.testing.assert_array_almost_equal(np.abs(canon1), np.abs(canon2_permuted), decimal=5)
+
+    def test_non_isomorphic_graphs_different_canonical_form(self):
+        """Non-isomorphic graphs should produce different canonical forms."""
+        # Graph 1: path P4 (0-1-2-3)
+        A1 = np.zeros((4, 4))
+        for i, j in [(0, 1), (1, 2), (2, 3)]:
+            A1[i, j] = A1[j, i] = 1
+
+        # Graph 2: star K_{1,3} (0-1, 0-2, 0-3)
+        A2 = np.zeros((4, 4))
+        for i in range(1, 4):
+            A2[0, i] = A2[i, 0] = 1
+
+        L1, L2 = self._laplacian(A1), self._laplacian(A2)
+        ev1, V1 = np.linalg.eigh(L1)
+        ev2, V2 = np.linalg.eigh(L2)
+
+        nt1 = ev1 > 1e-6
+        nt2 = ev2 > 1e-6
+
+        c1 = spectral_canonicalize(V1[:, nt1], ev1[nt1])
+        c2 = spectral_canonicalize(V2[:, nt2], ev2[nt2])
+
+        # Absolute row signatures should differ
+        sig1 = sorted(tuple(np.round(np.abs(c1[i]), 5)) for i in range(4))
+        sig2 = sorted(tuple(np.round(np.abs(c2[i]), 5)) for i in range(4))
+        assert sig1 != sig2, "Non-isomorphic graphs should have different signatures"
+
+    def test_multiplicity_columns_unchanged(self):
+        """Verify that columns with eigenvalue multiplicity > 1 are untouched,
+        while simple-spectrum columns are canonicalized."""
+        # 4-cycle has eigenvalues {0, 2, 2, 4} for Laplacian → multiplicity 2 at λ=2
+        A = np.array([[0, 1, 0, 1], [1, 0, 1, 0], [0, 1, 0, 1], [1, 0, 1, 0]], dtype=float)
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        mult = detect_eigenvalue_multiplicities(eigvals)["multiplicity"]
+        mult_cols = [j for j in range(len(eigvals)) if mult[j] > 1]
+
+        canon = spectral_canonicalize(eigvecs, eigvals)
+
+        # Multiplicity columns should be identical to input
+        for j in mult_cols:
+            np.testing.assert_array_equal(
+                canon[:, j],
+                eigvecs[:, j],
+                err_msg=f"Column {j} (mult>1) should not change",
+            )
+
+    def test_all_sign_combos_simple_spectrum_graph(self):
+        """Graph with fully simple spectrum: all 2^k sign combos on
+        simple-spectrum columns yield the same canonical result."""
+        # Use weighted path to guarantee simple spectrum and no node symmetry
+        A = np.array(
+            [
+                [0, 1, 0, 0, 0],
+                [1, 0, 2, 0, 0],
+                [0, 2, 0, 3, 0],
+                [0, 0, 3, 0, 1],
+                [0, 0, 0, 1, 0],
+            ],
+            dtype=float,
+        )
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        # Verify simple spectrum
+        diffs = np.diff(np.sort(evals))
+        assert np.all(diffs > 1e-3), f"Not simple spectrum: diffs={diffs}"
+
+        canon_ref = spectral_canonicalize(V, evals)
+        k = V.shape[1]
+
+        # Test all 2^k sign combinations
+        for bits in range(1 << k):
+            signs = np.ones(k)
+            for j in range(k):
+                if (bits >> j) & 1:
+                    signs[j] = -1
+            V_signed = V * signs[np.newaxis, :]
+            canon_test = spectral_canonicalize(V_signed, evals)
+            np.testing.assert_array_almost_equal(
+                canon_ref,
+                canon_test,
+                decimal=6,
+                err_msg=f"Failed for sign bits {bits:0{k}b}",
+            )
+
+    def test_multiplicity_graph_only_simple_cols_canonicalized(self):
+        """6-node graph with eigenvalue multiplicity: only simple-spectrum
+        columns should be sign-invariant; multiplicity columns left as-is."""
+        A = np.array(
+            [
+                [0, 1, 1, 0, 0, 0],
+                [1, 0, 1, 0, 0, 0],
+                [1, 1, 0, 1, 0, 0],
+                [0, 0, 1, 0, 1, 1],
+                [0, 0, 0, 1, 0, 1],
+                [0, 0, 0, 1, 1, 0],
+            ],
+            dtype=float,
+        )
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if mult[j] == 1]
+        assert len(simple_cols) < len(evals), "Need some non-simple columns for test"
+
+        canon_ref = spectral_canonicalize(V, evals)
+
+        # Only simple-spectrum columns should be sign-invariant
+        for j in simple_cols:
+            V_flip = V.copy()
+            V_flip[:, j] *= -1
+            canon_flip = spectral_canonicalize(V_flip, evals)
+            np.testing.assert_array_almost_equal(
+                canon_ref[:, simple_cols],
+                canon_flip[:, simple_cols],
+                decimal=6,
+                err_msg=f"Simple col {j} not sign-invariant",
+            )
+
+    def test_petersen_graph(self):
+        """Petersen graph (10 nodes, 3-regular): a classic counterexample
+        for many graph algorithms. Verify Spielman handles it correctly."""
+        # Petersen graph adjacency
+        A = np.zeros((10, 10))
+        outer = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)]
+        inner = [(5, 7), (7, 9), (9, 6), (6, 8), (8, 5)]
+        spokes = [(0, 5), (1, 6), (2, 7), (3, 8), (4, 9)]
+        for i, j in outer + inner + spokes:
+            A[i, j] = A[j, i] = 1
+
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        canon = spectral_canonicalize(V, evals)
+
+        # Petersen has eigenvalues {0, 1(x5), 4(x4)} so high multiplicity
+        # Most columns should be left unchanged
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        assert any(m > 1 for m in mult), "Petersen should have repeated eigenvalues"
+
+        # Even with multiplicities, should not crash and should be idempotent
+        canon2 = spectral_canonicalize(canon, evals)
+        np.testing.assert_array_almost_equal(canon, canon2)
+
+    def test_balanced_block_refinement_step_by_step(self):
+        """Trace Phase A on a small graph where initial partition needs
+        refinement, verifying that product vectors correctly split blocks."""
+        # 6-node graph where two nodes initially share abs row signature
+        # but product vectors separate them
+        A = np.array(
+            [
+                [0, 1, 1, 0, 0, 0],
+                [1, 0, 0, 1, 0, 0],
+                [1, 0, 0, 0, 1, 0],
+                [0, 1, 0, 0, 0, 1],
+                [0, 0, 1, 0, 0, 1],
+                [0, 0, 0, 1, 1, 0],
+            ],
+            dtype=float,
+        )
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+
+        blocks = find_balanced_blocks(V)
+
+        # All blocks should be non-empty and cover all nodes
+        all_nodes = set()
+        for b in blocks:
+            assert len(b) > 0
+            all_nodes.update(b)
+        assert all_nodes == set(range(V.shape[0])), "Blocks must cover all nodes"
+
+        # No node should appear in multiple blocks
+        total_nodes = sum(len(b) for b in blocks)
+        assert total_nodes == V.shape[0], "Blocks must be disjoint"

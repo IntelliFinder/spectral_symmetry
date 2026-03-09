@@ -298,6 +298,7 @@ class MolecularLapPEDataset:
         out = Data(
             x=data.x.float() if data.x is not None else torch.zeros(data.num_nodes, 9),
             x_pe=torch.from_numpy(pe).float(),
+            x_evals=torch.from_numpy(evals).float().unsqueeze(0).expand(data.num_nodes, -1),
             edge_index=data.edge_index,
             y=data.y,
             graph_idx=torch.tensor([graph_idx], dtype=torch.long),
@@ -359,6 +360,7 @@ class MolecularLapPEDataset:
         out = Data(
             x=data.x.float() if data.x is not None else torch.zeros(data.num_nodes, 9),
             x_pe=torch.from_numpy(pe).float(),
+            x_evals=torch.from_numpy(evals).float().unsqueeze(0).expand(data.num_nodes, -1),
             edge_index=data.edge_index,
             y=data.y,
             graph_idx=torch.tensor([graph_idx], dtype=torch.long),

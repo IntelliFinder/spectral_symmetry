@@ -106,7 +106,7 @@ def plot_convergence_per_hdim(logs, output_dir):
                 for entry in log:
                     ep = entry["epoch"] - 1
                     if ep < max_epochs:
-                        test_curves[i, ep] = entry["test_metric"]
+                        test_curves[i, ep] = entry.get("test_metric", entry.get("val_metric"))
 
             epochs = np.arange(1, max_epochs + 1)
             mean_test = np.nanmean(test_curves, axis=0)
@@ -161,7 +161,7 @@ def plot_convergence_per_hdim(logs, output_dir):
                     for entry in log:
                         ep = entry["epoch"] - 1
                         if ep < max_epochs:
-                            test_curves[i, ep] = entry["test_metric"]
+                            test_curves[i, ep] = entry.get("test_metric", entry.get("val_metric"))
 
                 epochs = np.arange(1, max_epochs + 1)
                 mean_test = np.nanmean(test_curves, axis=0)
