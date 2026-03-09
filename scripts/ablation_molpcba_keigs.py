@@ -131,15 +131,18 @@ def aggregate(results, model, canon, k, h):
 def prewarm_caches(canons, dataset="ogbg-molpcba", data_dir="data"):
     """Pre-compute LapPE caches for all canonicalization methods at k=CACHE_K.
 
+    Two-stage: eigdecomposition once (raw cache), then derive each canon.
     Must run BEFORE launching parallel training to avoid race conditions.
-    Uses file locking internally, but sequential pre-warming is faster and
-    avoids redundant computation.
     """
     print(f"\n{'=' * 70}")
     print(f"Pre-warming LapPE caches (k={CACHE_K})")
     print(f"{'=' * 70}")
 
-    for canon in canons:
+    # Process "none" first to build raw eigenvector base cache,
+    # then other canons just load the base and apply their method.
+    ordered = sorted(canons, key=lambda c: 0 if c == "none" else 1)
+
+    for canon in ordered:
         cache_dir = os.path.join(data_dir, "lappe_cache", f"{dataset}_{canon}_k{CACHE_K}")
         cache_path = os.path.join(cache_dir, "lappe.pkl")
 
@@ -147,7 +150,7 @@ def prewarm_caches(canons, dataset="ogbg-molpcba", data_dir="data"):
             print(f"  {canon}: cache exists, skipping")
             continue
 
-        print(f"  {canon}: computing k={CACHE_K} eigenvectors for {dataset}...")
+        print(f"  {canon}: building cache for {dataset}...")
         cmd = [
             sys.executable,
             "-c",
@@ -202,6 +205,8 @@ def build_commands(models, canons, k_values, hdims, seeds):
             "1e-3",
             "--seed",
             str(seed),
+            "--patience",
+            "20",
             "--save-dir",
             sd,
         ]

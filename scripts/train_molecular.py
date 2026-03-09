@@ -184,6 +184,12 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--weight-decay", type=float, default=1e-5)
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=20,
+        help="Early stopping patience: stop if val metric hasn't improved for this many epochs",
+    )
 
     # Output
     parser.add_argument("--save-dir", type=str, default=None)
@@ -298,6 +304,8 @@ def main():
     # Training loop
     best_val_metric = -float("inf")
     best_epoch = 0
+    epochs_without_improvement = 0
+    stopped_epoch = args.epochs  # default: ran all epochs
     epoch_log = []
     start_time = time.time()
 
@@ -326,7 +334,10 @@ def main():
         if val_metric > best_val_metric:
             best_val_metric = val_metric
             best_epoch = epoch
+            epochs_without_improvement = 0
             torch.save(model.state_dict(), save_dir / "best_model.pt")
+        else:
+            epochs_without_improvement += 1
 
         if epoch % 10 == 0 or epoch == 1:
             metric_name = "ROC-AUC" if "moltox21" in args.dataset else "AP"
@@ -336,6 +347,11 @@ def main():
                 f"val_{metric_name}={val_metric:.4f}  "
                 f"({epoch_time:.1f}s)"
             )
+
+        if epochs_without_improvement >= args.patience:
+            print(f"Early stopping at epoch {epoch} (patience={args.patience})")
+            stopped_epoch = epoch
+            break
 
     # Final evaluation with best model
     model.load_state_dict(torch.load(save_dir / "best_model.pt", weights_only=True))
@@ -371,6 +387,8 @@ def main():
         "seed": args.seed,
         "n_params": n_params,
         "best_epoch": best_epoch,
+        "stopped_epoch": stopped_epoch,
+        "patience": args.patience,
         f"best_val_{metric_name}": final_val,
         f"best_test_{metric_name}": final_test,
         "device": str(device),

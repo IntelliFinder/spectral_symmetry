@@ -229,34 +229,41 @@ class MolecularLapPEDataset:
     def _cache_path(self):
         return os.path.join(self.cache_dir, "lappe.pkl")
 
-    def _precompute_lappe(self):
-        """Compute LapPE for all graphs, using disk cache if available.
+    def _base_cache_dir(self):
+        """Return the directory for the raw (uncanonicalized) eigenvector cache."""
+        lappe_dir = os.path.dirname(self.cache_dir)
+        return os.path.join(lappe_dir, f"{self.dataset_name}_raw_k{self._cache_k}")
 
-        Uses file locking to prevent race conditions when multiple processes
-        initialize the same cache concurrently (e.g. multi-GPU ablations).
+    def _base_cache_path(self):
+        return os.path.join(self._base_cache_dir(), "lappe.pkl")
+
+    def _ensure_base_cache(self):
+        """Ensure the raw eigenvector base cache exists, computing it if needed.
+
+        Returns the base cache data dict: {graph_idx: (pe, evals)}.
         """
-        cache_path = self._cache_path()
+        base_dir = self._base_cache_dir()
+        base_path = self._base_cache_path()
 
-        # Fast path: cache already exists
-        if os.path.exists(cache_path):
-            with open(cache_path, "rb") as f:
-                self._pe_data = pickle.load(f)
-            return
+        # Fast path: base cache already on disk
+        if os.path.exists(base_path):
+            with open(base_path, "rb") as f:
+                return pickle.load(f)
 
-        os.makedirs(self.cache_dir, exist_ok=True)
-        lock_path = os.path.join(self.cache_dir, "lappe.lock")
+        os.makedirs(base_dir, exist_ok=True)
+        lock_path = os.path.join(base_dir, "lappe.lock")
 
         with filelock.FileLock(lock_path, timeout=7200):
             # Re-check inside lock — another process may have computed it
-            if os.path.exists(cache_path):
-                with open(cache_path, "rb") as f:
-                    self._pe_data = pickle.load(f)
-                return
+            if os.path.exists(base_path):
+                with open(base_path, "rb") as f:
+                    return pickle.load(f)
 
             all_indices = list(range(len(self.ogb_dataset)))
+            base_data = {}
 
             n_failed = 0
-            for idx in tqdm(all_indices, desc=f"LapPE ({self.canonicalization})"):
+            for idx in tqdm(all_indices, desc="LapPE (raw eigdecomp)"):
                 data = self.ogb_dataset[idx]
                 edge_index_np = data.edge_index.numpy()
                 num_nodes = int(data.num_nodes)
@@ -265,21 +272,116 @@ class MolecularLapPEDataset:
                     edge_index_np,
                     num_nodes,
                     self._cache_k,
-                    self.canonicalization,
+                    "none",
                     idx,
                 )
                 if not ok:
                     n_failed += 1
-                self._pe_data[idx] = (pe, evals)
+                base_data[idx] = (pe, evals)
 
             if n_failed > 0:
-                print(f"  LapPE: {n_failed} graphs failed (using zero PE)")
+                print(f"  LapPE (raw): {n_failed} graphs failed (using zero PE)")
 
-            # Atomic write: write to temp file, then rename
+            # Atomic write
+            fd, tmp_path = tempfile.mkstemp(dir=base_dir, suffix=".pkl")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    pickle.dump(base_data, f, protocol=4)
+                os.replace(tmp_path, base_path)
+            except BaseException:
+                os.unlink(tmp_path)
+                raise
+
+            return base_data
+
+    def _precompute_lappe(self):
+        """Compute LapPE for all graphs using two-stage caching.
+
+        Stage 1 (base cache): Raw eigenvectors computed once and shared across
+        all canonicalization methods.
+
+        Stage 2 (canon cache): Canonicalized eigenvectors derived from the base
+        cache.  For ``"none"`` and ``"random_augmented"`` the canon cache IS the
+        base cache (no extra work).
+
+        Uses file locking to prevent race conditions when multiple processes
+        initialize the same cache concurrently (e.g. multi-GPU ablations).
+        """
+        cache_path = self._cache_path()
+
+        # Step 1: Fast path — canon cache already exists
+        if os.path.exists(cache_path):
+            with open(cache_path, "rb") as f:
+                self._pe_data = pickle.load(f)
+            return
+
+        # Step 2: Ensure the base (raw) cache exists
+        base_data = self._ensure_base_cache()
+
+        # Step 3: For "none" and "random_augmented", the canon cache is the
+        # base cache itself (random_augmented applies signs at runtime).
+        if self.canonicalization in ("none", "random_augmented"):
+            self._pe_data = base_data
+            # Symlink or copy the canon cache so future loads hit Step 1
+            os.makedirs(self.cache_dir, exist_ok=True)
+            lock_path = os.path.join(self.cache_dir, "lappe.lock")
+            with filelock.FileLock(lock_path, timeout=7200):
+                if not os.path.exists(cache_path):
+                    fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, suffix=".pkl")
+                    try:
+                        with os.fdopen(fd, "wb") as f:
+                            pickle.dump(base_data, f, protocol=4)
+                        os.replace(tmp_path, cache_path)
+                    except BaseException:
+                        os.unlink(tmp_path)
+                        raise
+            return
+
+        # Step 4: Apply canonicalization to each graph's eigvecs from base cache
+        os.makedirs(self.cache_dir, exist_ok=True)
+        lock_path = os.path.join(self.cache_dir, "lappe.lock")
+
+        with filelock.FileLock(lock_path, timeout=7200):
+            # Re-check inside lock
+            if os.path.exists(cache_path):
+                with open(cache_path, "rb") as f:
+                    self._pe_data = pickle.load(f)
+                return
+
+            canon_data = {}
+            method = self.canonicalization
+
+            for idx in tqdm(base_data, desc=f"LapPE canonicalize ({method})"):
+                pe, evals = base_data[idx]
+
+                # Find LCC nodes (non-zero rows in pe)
+                row_nonzero = np.any(pe != 0, axis=1)
+                n_actual_eigs = int(np.sum(evals != 0))
+
+                if not np.any(row_nonzero) or n_actual_eigs == 0:
+                    # No valid eigenvectors — keep zeros
+                    canon_data[idx] = (pe, evals)
+                    continue
+
+                lcc_indices = np.where(row_nonzero)[0]
+                raw_eigvecs = pe[lcc_indices, :n_actual_eigs]
+                raw_evals = evals[:n_actual_eigs]
+
+                # Apply canonicalization
+                canon_eigvecs = _apply_canonicalization(raw_eigvecs, raw_evals, method, idx)
+
+                # Write back into full pe array
+                pe_canon = pe.copy()
+                pe_canon[lcc_indices, :n_actual_eigs] = canon_eigvecs.astype(np.float32)
+                canon_data[idx] = (pe_canon, evals)
+
+            self._pe_data = canon_data
+
+            # Atomic write
             fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, suffix=".pkl")
             try:
                 with os.fdopen(fd, "wb") as f:
-                    pickle.dump(self._pe_data, f, protocol=4)
+                    pickle.dump(canon_data, f, protocol=4)
                 os.replace(tmp_path, cache_path)
             except BaseException:
                 os.unlink(tmp_path)
