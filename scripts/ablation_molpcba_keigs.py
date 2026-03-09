@@ -125,6 +125,50 @@ def aggregate(results, model, canon, k, h):
     return None
 
 
+# ── Cache Pre-warming ────────────────────────────────────────────────────────
+
+
+def prewarm_caches(canons, dataset="ogbg-molpcba", data_dir="data"):
+    """Pre-compute LapPE caches for all canonicalization methods at k=CACHE_K.
+
+    Must run BEFORE launching parallel training to avoid race conditions.
+    Uses file locking internally, but sequential pre-warming is faster and
+    avoids redundant computation.
+    """
+    print(f"\n{'=' * 70}")
+    print(f"Pre-warming LapPE caches (k={CACHE_K})")
+    print(f"{'=' * 70}")
+
+    for canon in canons:
+        if canon == "random_augmented":
+            print(f"  Skipping {canon} (non-deterministic, never cached)")
+            continue
+
+        cache_dir = os.path.join(data_dir, "lappe_cache", f"{dataset}_{canon}_k{CACHE_K}")
+        cache_path = os.path.join(cache_dir, "lappe.pkl")
+
+        if os.path.exists(cache_path):
+            print(f"  {canon}: cache exists, skipping")
+            continue
+
+        print(f"  {canon}: computing k={CACHE_K} eigenvectors for {dataset}...")
+        cmd = [
+            sys.executable,
+            "-c",
+            f"import sys; sys.path.insert(0, '.'); "
+            f"from src.experiments.molecular.dataset import MolecularLapPEDataset; "
+            f"ds = MolecularLapPEDataset("
+            f"  dataset_name='{dataset}', canonicalization='{canon}', "
+            f"  n_eigs={CACHE_K}, data_dir='{data_dir}'); "
+            f"print(f'  Cached {{len(ds)}} graphs')",
+        ]
+        result = subprocess.run(cmd, capture_output=False)
+        if result.returncode != 0:
+            print(f"  WARNING: cache pre-warm failed for {canon} (rc={result.returncode})")
+
+    print("  Cache pre-warming complete.\n")
+
+
 # ── Training Phase ───────────────────────────────────────────────────────────
 
 
@@ -740,6 +784,10 @@ def main():
 
     # Training phase
     if not skip_training:
+        # Pre-warm caches before launching parallel workers
+        if not args.dry_run:
+            prewarm_caches(canons)
+
         commands, skipped = build_commands(models, canons, k_values, hdims, seeds)
         print(f"  {skipped} already exist, {len(commands)} to run")
         run_training(

@@ -16,7 +16,9 @@ Supported canonicalization methods:
 
 import os
 import pickle
+import tempfile
 
+import filelock
 import numpy as np
 import scipy.sparse as sp
 import torch
@@ -228,41 +230,61 @@ class MolecularLapPEDataset:
         return os.path.join(self.cache_dir, "lappe.pkl")
 
     def _precompute_lappe(self):
-        """Compute LapPE for all graphs, using disk cache if available."""
+        """Compute LapPE for all graphs, using disk cache if available.
+
+        Uses file locking to prevent race conditions when multiple processes
+        initialize the same cache concurrently (e.g. multi-GPU ablations).
+        """
         cache_path = self._cache_path()
 
+        # Fast path: cache already exists
         if os.path.exists(cache_path) and self.canonicalization != "random_augmented":
             with open(cache_path, "rb") as f:
                 self._pe_data = pickle.load(f)
             return
 
         os.makedirs(self.cache_dir, exist_ok=True)
-        all_indices = list(range(len(self.ogb_dataset)))
+        lock_path = os.path.join(self.cache_dir, "lappe.lock")
 
-        n_failed = 0
-        for idx in tqdm(all_indices, desc=f"LapPE ({self.canonicalization})"):
-            data = self.ogb_dataset[idx]
-            edge_index_np = data.edge_index.numpy()
-            num_nodes = int(data.num_nodes)
+        with filelock.FileLock(lock_path, timeout=7200):
+            # Re-check inside lock — another process may have computed it
+            if os.path.exists(cache_path) and self.canonicalization != "random_augmented":
+                with open(cache_path, "rb") as f:
+                    self._pe_data = pickle.load(f)
+                return
 
-            pe, evals, ok = _compute_lappe_for_graph(
-                edge_index_np,
-                num_nodes,
-                self._cache_k,
-                self.canonicalization,
-                idx,
-            )
-            if not ok:
-                n_failed += 1
-            self._pe_data[idx] = (pe, evals)
+            all_indices = list(range(len(self.ogb_dataset)))
 
-        if n_failed > 0:
-            print(f"  LapPE: {n_failed} graphs failed (using zero PE)")
+            n_failed = 0
+            for idx in tqdm(all_indices, desc=f"LapPE ({self.canonicalization})"):
+                data = self.ogb_dataset[idx]
+                edge_index_np = data.edge_index.numpy()
+                num_nodes = int(data.num_nodes)
 
-        # Save cache (except for random_augmented which is non-deterministic)
-        if self.canonicalization != "random_augmented":
-            with open(cache_path, "wb") as f:
-                pickle.dump(self._pe_data, f, protocol=4)
+                pe, evals, ok = _compute_lappe_for_graph(
+                    edge_index_np,
+                    num_nodes,
+                    self._cache_k,
+                    self.canonicalization,
+                    idx,
+                )
+                if not ok:
+                    n_failed += 1
+                self._pe_data[idx] = (pe, evals)
+
+            if n_failed > 0:
+                print(f"  LapPE: {n_failed} graphs failed (using zero PE)")
+
+            # Atomic write: write to temp file, then rename
+            if self.canonicalization != "random_augmented":
+                fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, suffix=".pkl")
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        pickle.dump(self._pe_data, f, protocol=4)
+                    os.replace(tmp_path, cache_path)
+                except BaseException:
+                    os.unlink(tmp_path)
+                    raise
 
     def get_split_indices(self):
         """Return OGB split indices."""
