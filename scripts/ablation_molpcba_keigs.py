@@ -41,20 +41,20 @@ import numpy as np  # noqa: E402
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-CANONICALIZATIONS = ["maxabs", "random_augmented", "random_fixed", "none"]
+CANONICALIZATIONS = ["random_fixed", "random_augmented", "oap", "spielman"]
 
 CANON_COLORS = {
-    "maxabs": "#e67e22",
-    "random_augmented": "#bbbbbb",
-    "random_fixed": "#888888",
-    "none": "#c0392b",
+    "random_fixed": "#3498db",
+    "random_augmented": "#2ecc71",
+    "oap": "#e67e22",
+    "spielman": "#9b59b6",
 }
 
 CANON_LABELS = {
-    "maxabs": "MaxAbs",
-    "random_augmented": "Random (aug)",
     "random_fixed": "Random (fixed)",
-    "none": "None (raw)",
+    "random_augmented": "Random (aug)",
+    "oap": "OAP",
+    "spielman": "Spielman",
 }
 
 K_VALUES = [3, 6, 12]
@@ -128,29 +128,26 @@ def aggregate(results, model, canon, k, h):
 # ── Cache Pre-warming ────────────────────────────────────────────────────────
 
 
-def prewarm_caches(canons, dataset="ogbg-molpcba", data_dir="data"):
-    """Pre-compute LapPE caches for all canonicalization methods at k=CACHE_K.
+def prewarm_caches(canons, k_values, dataset="ogbg-molpcba", data_dir="data"):
+    """Pre-compute LapPE caches for all canonicalization methods.
 
-    Two-stage: eigdecomposition once (raw cache), then derive each canon.
-    Must run BEFORE launching parallel training to avoid race conditions.
+    Two-stage: eigdecomposition once (raw cache at k=CACHE_K), then derive
+    each canon.  Spielman needs per-k caches (block structure depends on k).
     """
     print(f"\n{'=' * 70}")
-    print(f"Pre-warming LapPE caches (k={CACHE_K})")
+    print(f"Pre-warming LapPE caches (base k={CACHE_K})")
     print(f"{'=' * 70}")
 
-    # Process "none" first to build raw eigenvector base cache,
-    # then other canons just load the base and apply their method.
-    ordered = sorted(canons, key=lambda c: 0 if c == "none" else 1)
-
-    for canon in ordered:
-        cache_dir = os.path.join(data_dir, "lappe_cache", f"{dataset}_{canon}_k{CACHE_K}")
+    def _warm(canon, k):
+        cache_k = k if canon == "spielman" else CACHE_K
+        cache_dir = os.path.join(data_dir, "lappe_cache", f"{dataset}_{canon}_k{cache_k}")
         cache_path = os.path.join(cache_dir, "lappe.pkl")
 
         if os.path.exists(cache_path):
-            print(f"  {canon}: cache exists, skipping")
-            continue
+            print(f"  {canon} (k={k}): cache exists, skipping")
+            return
 
-        print(f"  {canon}: building cache for {dataset}...")
+        print(f"  {canon} (k={k}): building cache...")
         cmd = [
             sys.executable,
             "-c",
@@ -158,12 +155,22 @@ def prewarm_caches(canons, dataset="ogbg-molpcba", data_dir="data"):
             f"from src.experiments.molecular.dataset import MolecularLapPEDataset; "
             f"ds = MolecularLapPEDataset("
             f"  dataset_name='{dataset}', canonicalization='{canon}', "
-            f"  n_eigs={CACHE_K}, data_dir='{data_dir}'); "
+            f"  n_eigs={k}, data_dir='{data_dir}', "
+            f"  cache_n_eigs={CACHE_K}); "
             f"print(f'  Cached {{len(ds)}} graphs')",
         ]
         result = subprocess.run(cmd, capture_output=False)
         if result.returncode != 0:
-            print(f"  WARNING: cache pre-warm failed for {canon} (rc={result.returncode})")
+            print(f"  WARNING: cache pre-warm failed for {canon} k={k} (rc={result.returncode})")
+
+    for canon in canons:
+        if canon == "spielman":
+            # Spielman needs a separate cache per k
+            for k in k_values:
+                _warm(canon, k)
+        else:
+            # Other methods: one cache at CACHE_K, sliced at runtime
+            _warm(canon, CACHE_K)
 
     print("  Cache pre-warming complete.\n")
 
@@ -532,8 +539,8 @@ def plot3_ap_vs_hdim_grid(results):
 
 
 def plot4_heatmap(results):
-    """Plot 4: Heatmap -- method x k, cell = mean AP, one per model at h=256."""
-    h = 256
+    """Plot 4: Heatmap -- method x k, cell = mean AP, one per model at h=128."""
+    h = 128
     for model in MODELS:
         n_methods = len(CANONICALIZATIONS)
         n_k = len(K_VALUES)
@@ -787,7 +794,7 @@ def main():
     if not skip_training:
         # Pre-warm caches before launching parallel workers
         if not args.dry_run:
-            prewarm_caches(canons)
+            prewarm_caches(canons, k_values)
 
         commands, skipped = build_commands(models, canons, k_values, hdims, seeds)
         print(f"  {skipped} already exist, {len(commands)} to run")

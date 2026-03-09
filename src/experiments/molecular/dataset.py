@@ -215,10 +215,13 @@ class MolecularLapPEDataset:
         else:
             self.indices = list(range(len(self.ogb_dataset)))
 
-        # Cache directory — keyed on cache_k so all k<=cache_k share the same cache
+        # Cache directory — keyed on cache_k so all k<=cache_k share the same cache.
+        # Exception: spielman needs per-k caches because its block structure depends
+        # on which k eigenvectors are considered together.
         if cache_dir is None:
+            cache_k_for_path = n_eigs if canonicalization == "spielman" else self._cache_k
             cache_dir = os.path.join(
-                data_dir, "lappe_cache", f"{dataset_name}_{canonicalization}_k{self._cache_k}"
+                data_dir, "lappe_cache", f"{dataset_name}_{canonicalization}_k{cache_k_for_path}"
             )
         self.cache_dir = cache_dir
 
@@ -364,15 +367,22 @@ class MolecularLapPEDataset:
                     continue
 
                 lcc_indices = np.where(row_nonzero)[0]
-                raw_eigvecs = pe[lcc_indices, :n_actual_eigs]
-                raw_evals = evals[:n_actual_eigs]
+
+                # For spielman, slice to n_eigs BEFORE canonicalizing —
+                # block structure depends on which k eigenvectors are present.
+                if method == "spielman":
+                    n_use = min(n_actual_eigs, self.n_eigs)
+                else:
+                    n_use = n_actual_eigs
+                raw_eigvecs = pe[lcc_indices, :n_use]
+                raw_evals = evals[:n_use]
 
                 # Apply canonicalization
                 canon_eigvecs = _apply_canonicalization(raw_eigvecs, raw_evals, method, idx)
 
                 # Write back into full pe array
                 pe_canon = pe.copy()
-                pe_canon[lcc_indices, :n_actual_eigs] = canon_eigvecs.astype(np.float32)
+                pe_canon[lcc_indices, :n_use] = canon_eigvecs.astype(np.float32)
                 canon_data[idx] = (pe_canon, evals)
 
             self._pe_data = canon_data
