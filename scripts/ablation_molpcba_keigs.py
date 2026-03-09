@@ -57,7 +57,7 @@ CANON_LABELS = {
     "none": "None (raw)",
 }
 
-K_VALUES = [1, 3, 6, 9, 12, 15]
+K_VALUES = [3, 6, 12]
 HIDDEN_DIMS = [32, 128]
 MODELS = ["gin", "gcn"]
 SEEDS = [0, 1, 2]
