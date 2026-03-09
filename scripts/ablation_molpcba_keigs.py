@@ -58,11 +58,11 @@ CANON_LABELS = {
 }
 
 K_VALUES = [1, 3, 6, 9, 12, 15]
-HIDDEN_DIMS = [32, 256]
+HIDDEN_DIMS = [32, 128]
 MODELS = ["gin", "gcn"]
 SEEDS = [0, 1, 2]
 CACHE_K = 15  # precompute this many eigenvectors, slice at runtime
-MAX_PARALLEL = 4  # concurrent training jobs per GPU (safe for h=256 on 48GB A40)
+MAX_PARALLEL = 6  # concurrent training jobs per GPU (safe for h=128 on 48GB A40)
 
 BASE_DIR = "results/molpcba_keigs_ablation"
 PLOT_DIR = os.path.join(BASE_DIR, "plots")
