@@ -23,7 +23,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     for features, mask, labels in loader:
         features = features.to(device)
         mask = mask.to(device)
-        labels = torch.tensor(labels, dtype=torch.long, device=device)
+        labels = torch.as_tensor(labels, dtype=torch.long, device=device)
 
         logits = model(features, mask)
         loss = criterion(logits, labels)
@@ -50,7 +50,7 @@ def evaluate(model, loader, device):
     for features, mask, labels in loader:
         features = features.to(device)
         mask = mask.to(device)
-        labels = torch.tensor(labels, dtype=torch.long, device=device)
+        labels = torch.as_tensor(labels, dtype=torch.long, device=device)
 
         logits = model(features, mask)
         preds = logits.argmax(dim=1)
@@ -68,7 +68,7 @@ def train_one_epoch_dist(model, loader, criterion, optimizer, device):
         features = features.to(device)
         dist_matrix = dist_matrix.to(device)
         mask = mask.to(device)
-        labels = torch.tensor(labels, dtype=torch.long, device=device)
+        labels = torch.as_tensor(labels, dtype=torch.long, device=device)
 
         logits = model(features, dist_matrix, mask)
         loss = criterion(logits, labels)
@@ -96,7 +96,7 @@ def evaluate_dist(model, loader, device):
         features = features.to(device)
         dist_matrix = dist_matrix.to(device)
         mask = mask.to(device)
-        labels = torch.tensor(labels, dtype=torch.long, device=device)
+        labels = torch.as_tensor(labels, dtype=torch.long, device=device)
 
         logits = model(features, dist_matrix, mask)
         preds = logits.argmax(dim=1)
@@ -115,7 +115,7 @@ def train_one_epoch_spectral_dist(model, loader, criterion, optimizer, device):
         dist_matrix = dist_matrix.to(device)
         spectral_dists = spectral_dists.to(device)
         mask = mask.to(device)
-        labels = torch.tensor(labels, dtype=torch.long, device=device)
+        labels = torch.as_tensor(labels, dtype=torch.long, device=device)
 
         logits = model(features, dist_matrix, spectral_dists, mask)
         loss = criterion(logits, labels)
@@ -144,7 +144,7 @@ def evaluate_spectral_dist(model, loader, device):
         dist_matrix = dist_matrix.to(device)
         spectral_dists = spectral_dists.to(device)
         mask = mask.to(device)
-        labels = torch.tensor(labels, dtype=torch.long, device=device)
+        labels = torch.as_tensor(labels, dtype=torch.long, device=device)
 
         logits = model(features, dist_matrix, spectral_dists, mask)
         preds = logits.argmax(dim=1)
@@ -180,6 +180,7 @@ def main(argv=None):
     )
     parser.add_argument("--save-dir", type=str, default="results/classifier", help="Save directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers")
     args = parser.parse_args(argv)
 
     seed_everything(args.seed)
@@ -221,7 +222,7 @@ def main(argv=None):
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=args.num_workers,
         pin_memory=True,
         worker_init_fn=worker_init_fn,
     )
@@ -229,7 +230,7 @@ def main(argv=None):
         val_ds,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=args.num_workers,
         pin_memory=True,
         worker_init_fn=worker_init_fn,
     )
@@ -237,7 +238,7 @@ def main(argv=None):
         test_ds,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=args.num_workers,
         pin_memory=True,
         worker_init_fn=worker_init_fn,
     )

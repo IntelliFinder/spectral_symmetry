@@ -344,10 +344,10 @@ class PointCloudModelNet(Dataset):
             distances, indices = nn.kneighbors(points)
 
             dist_matrix = np.zeros((n_points, n_points), dtype=np.float32)
-            for i in range(n_actual):
-                for j_idx in range(1, k + 1):  # skip self
-                    j = indices[i, j_idx]
-                    dist_matrix[i, j] = distances[i, j_idx]
+            rows = np.repeat(np.arange(n_actual), k)
+            cols = indices[:n_actual, 1 : k + 1].ravel()
+            vals = distances[:n_actual, 1 : k + 1].ravel()
+            dist_matrix[rows, cols] = vals.astype(np.float32)
 
             # Symmetrize
             dist_matrix = 0.5 * (dist_matrix + dist_matrix.T)
@@ -468,10 +468,10 @@ class SpectralNodeModelNet(Dataset):
             distances, indices = nn_model.kneighbors(pts_cc)
 
             dist_matrix = np.zeros((n_points, n_points), dtype=np.float32)
-            for i in range(n_actual):
-                for j_idx in range(1, k + 1):
-                    j = indices[i, j_idx]
-                    dist_matrix[i, j] = distances[i, j_idx]
+            rows = np.repeat(np.arange(n_actual), k)
+            cols = indices[:n_actual, 1 : k + 1].ravel()
+            vals = distances[:n_actual, 1 : k + 1].ravel()
+            dist_matrix[rows, cols] = vals.astype(np.float32)
             dist_matrix = 0.5 * (dist_matrix + dist_matrix.T)
 
             mask = np.ones(n_points, dtype=bool)
@@ -594,10 +594,10 @@ class SpectralDistanceModelNet(Dataset):
             distances, indices = nn_model.kneighbors(pts_cc)
 
             dist_matrix = np.zeros((n_points, n_points), dtype=np.float32)
-            for i in range(n_actual):
-                for j_idx in range(1, k + 1):
-                    j = indices[i, j_idx]
-                    dist_matrix[i, j] = distances[i, j_idx]
+            rows = np.repeat(np.arange(n_actual), k)
+            cols = indices[:n_actual, 1 : k + 1].ravel()
+            vals = distances[:n_actual, 1 : k + 1].ravel()
+            dist_matrix[rows, cols] = vals.astype(np.float32)
             dist_matrix = 0.5 * (dist_matrix + dist_matrix.T)
 
             # Pre-compute group info for eigenvalue multiplicities
@@ -636,16 +636,27 @@ class SpectralDistanceModelNet(Dataset):
         n_actual = d["n_actual"]
         n_eigs_actual = eigvecs.shape[1]
 
-        # Compute spectral distance channels on-the-fly
+        # Compute spectral distance channels on-the-fly (vectorized)
         spectral_dists = np.zeros((self.n_points, self.n_points, self.n_eigs), dtype=np.float32)
-        unique_groups = sorted(set(group_indices[:n_eigs_actual]))
-        for ch_idx, g in enumerate(unique_groups):
-            members = [k for k in range(n_eigs_actual) if group_indices[k] == g]
-            V_g = eigvecs[:, members]  # (n_actual, m)
-            avg_lambda = np.mean(eigvals[members])
-            scale = float(np.exp(-avg_lambda))
-            proj = (V_g @ V_g.T) * scale  # (n_actual, n_actual)
-            spectral_dists[:n_actual, :n_actual, ch_idx] = proj
+        gi = np.array(group_indices[:n_eigs_actual])
+        unique_groups = np.unique(gi)
+        n_groups = len(unique_groups)
+
+        if n_groups == n_eigs_actual:
+            # Non-degenerate (common case): each eigenvalue is its own group
+            scales = np.exp(-eigvals[:n_eigs_actual])  # (n_eigs_actual,)
+            V = eigvecs[:n_actual, :]  # (n_actual, n_eigs_actual)
+            V_scaled = V * np.sqrt(scales)[np.newaxis, :]
+            spectral_dists[:n_actual, :n_actual, :n_eigs_actual] = np.einsum(
+                "ik,jk->ijk", V_scaled, V_scaled
+            )
+        else:
+            # Degenerate case: group eigenvectors by eigenvalue multiplicity
+            for ch_idx, g in enumerate(unique_groups):
+                mask = gi == g
+                V_g = eigvecs[:, mask]
+                scale = float(np.exp(-eigvals[mask].mean()))
+                spectral_dists[:n_actual, :n_actual, ch_idx] = (V_g @ V_g.T) * scale
 
         return (
             torch.from_numpy(d["features"]),
