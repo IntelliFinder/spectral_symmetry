@@ -190,8 +190,18 @@ class TestUnifiedDispatcher:
             canonicalize(V, method="oap")
 
     def test_all_methods_listed(self):
-        """CANONICALIZATION_METHODS contains all 7 methods."""
-        expected = {"spielman", "maxabs", "random_fixed", "random_augmented", "map", "oap", "none"}
+        """CANONICALIZATION_METHODS contains all 9 methods."""
+        expected = {
+            "spielman",
+            "spielman_partition",
+            "maxabs",
+            "random_fixed",
+            "random_augmented",
+            "map",
+            "oap",
+            "abs",
+            "none",
+        }
         assert set(CANONICALIZATION_METHODS) == expected
 
     def test_map_routes_correctly(self):

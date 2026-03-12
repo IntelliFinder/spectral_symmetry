@@ -508,6 +508,66 @@ def spectral_canonicalize(eigenvectors, eigenvalues, precision=8):
     return result
 
 
+def spectral_canonicalize_partition(eigenvectors, eigenvalues, precision=8):
+    """Partial Spielman: only abs-value partition, no GF(2) refinement.
+
+    Uses only the initial partition of nodes by absolute-value row signature
+    (Step 1 of the Spielman algorithm) to define a canonical node ordering,
+    then computes signs using the first-non-zero-entry rule. Skips the GF(2)
+    product-vector refinement loop (Step 2), which means some balanced blocks
+    may remain merged.
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (n, k)
+    eigenvalues : ndarray of shape (k,)
+    precision : int
+
+    Returns
+    -------
+    canonicalized : ndarray of shape (n, k), sign-canonicalized copy.
+    """
+    eigenvectors = np.asarray(eigenvectors, dtype=float)
+    eigenvalues = np.asarray(eigenvalues, dtype=float)
+
+    if eigenvectors.size == 0:
+        return eigenvectors.copy()
+
+    n, k = eigenvectors.shape
+
+    # Detect multiplicities
+    mult_info = detect_eigenvalue_multiplicities(eigenvalues)
+    multiplicity = mult_info["multiplicity"]
+
+    # Find columns with multiplicity == 1
+    simple_cols = [j for j in range(k) if multiplicity[j] == 1]
+
+    if not simple_cols:
+        return eigenvectors.copy()
+
+    V_simple = eigenvectors[:, simple_cols].copy()
+
+    # Step 1 only: partition by absolute-value row signature (no refinement)
+    initial_partition = {}
+    for i in range(n):
+        sig = _get_abs_row_signature(V_simple[i, :], precision)
+        if sig not in initial_partition:
+            initial_partition[sig] = []
+        initial_partition[sig].append(i)
+
+    blocks = [frozenset(indices) for indices in initial_partition.values()]
+
+    # Compute signs using same Phase B logic
+    signs = compute_canonical_signs(V_simple, blocks, precision=precision)
+
+    # Apply signs
+    result = eigenvectors.copy()
+    for idx, col in enumerate(simple_cols):
+        result[:, col] = eigenvectors[:, col] * signs[idx]
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # MAP / OAP shared helpers (faithful numpy ports of the reference torch code)
 # ---------------------------------------------------------------------------
@@ -934,11 +994,13 @@ def spectral_canonicalize_oap(eigenvectors, eigenvalues):
 
 CANONICALIZATION_METHODS = (
     "spielman",
+    "spielman_partition",
     "maxabs",
     "random_fixed",
     "random_augmented",
     "map",
     "oap",
+    "abs",
     "none",
 )
 
@@ -1011,6 +1073,46 @@ def canonicalize_random_augmented(eigenvectors):
     return result
 
 
+def canonicalize_abs(eigenvectors):
+    """Absolute-value canonicalization (SignNet-style sign invariance).
+
+    Takes the element-wise absolute value of all eigenvector entries,
+    removing all sign information. This is the preprocessing analog of
+    SignNet's sign-invariant architecture (Lim et al., ICLR 2023).
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (N, k)
+
+    Returns
+    -------
+    ndarray of shape (N, k), all entries non-negative.
+    """
+    return np.abs(np.asarray(eigenvectors, dtype=float))
+
+
+def scale_eigenvectors_by_eigenvalues(eigenvectors, eigenvalues):
+    """Scale each eigenvector by 1/sqrt(eigenvalue).
+
+    Rescales eigenvector columns so that geometry-scale information from
+    eigenvalues is baked into the positional encoding. Eigenvalues close
+    to zero are left unscaled to avoid division by near-zero.
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (N, k)
+    eigenvalues : ndarray of shape (k,)
+
+    Returns
+    -------
+    ndarray of shape (N, k), scaled copy.
+    """
+    eigenvectors = np.asarray(eigenvectors, dtype=float).copy()
+    eigenvalues = np.asarray(eigenvalues, dtype=float)
+    scale = np.where(eigenvalues > 1e-8, 1.0 / np.sqrt(eigenvalues), 1.0)
+    return eigenvectors * scale[np.newaxis, :]
+
+
 def canonicalize(eigenvectors, eigenvalues=None, method="maxabs", sample_idx=0):
     """Unified dispatcher for eigenvector canonicalization.
 
@@ -1042,12 +1144,14 @@ def canonicalize(eigenvectors, eigenvalues=None, method="maxabs", sample_idx=0):
             f"Unknown canonicalization method: {method!r}. Choose from {CANONICALIZATION_METHODS}"
         )
 
-    needs_eigenvalues = ("spielman", "map", "oap")
+    needs_eigenvalues = ("spielman", "spielman_partition", "map", "oap")
     if method in needs_eigenvalues and eigenvalues is None:
         raise ValueError(f"eigenvalues required for method={method!r}")
 
     if method == "spielman":
         return spectral_canonicalize(eigenvectors, eigenvalues)
+    elif method == "spielman_partition":
+        return spectral_canonicalize_partition(eigenvectors, eigenvalues)
     elif method == "maxabs":
         return canonicalize_maxabs(eigenvectors)
     elif method == "random_fixed":
@@ -1058,5 +1162,7 @@ def canonicalize(eigenvectors, eigenvalues=None, method="maxabs", sample_idx=0):
         return spectral_canonicalize_map(eigenvectors, eigenvalues)
     elif method == "oap":
         return spectral_canonicalize_oap(eigenvectors, eigenvalues)
+    elif method == "abs":
+        return canonicalize_abs(eigenvectors)
     elif method == "none":
         return np.asarray(eigenvectors, dtype=float).copy()

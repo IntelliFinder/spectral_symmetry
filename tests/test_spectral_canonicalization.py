@@ -5,10 +5,14 @@ import numpy as np
 from src.spectral_canonicalization import (
     _gf2_null_space,
     _gf2_row_reduce,
+    canonicalize,
+    canonicalize_abs,
     compute_canonical_signs,
     find_balanced_blocks,
+    scale_eigenvectors_by_eigenvalues,
     solve_z2_system,
     spectral_canonicalize,
+    spectral_canonicalize_partition,
 )
 
 # ---------------------------------------------------------------------------
@@ -763,3 +767,176 @@ class TestSpielmanStepByStep:
         # No node should appear in multiple blocks
         total_nodes = sum(len(b) for b in blocks)
         assert total_nodes == V.shape[0], "Blocks must be disjoint"
+
+
+# ---------------------------------------------------------------------------
+# TestCanonicalizeAbs
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalizeAbs:
+    """Tests for absolute-value (SignNet-style) canonicalization."""
+
+    def test_all_nonnegative(self):
+        """Output should be non-negative."""
+        V = np.array([[1, -2], [-3, 4], [5, -6]], dtype=float)
+        result = canonicalize_abs(V)
+        assert np.all(result >= 0)
+
+    def test_sign_invariance(self):
+        """Flipping any column sign should not change the result."""
+        rng = np.random.RandomState(42)
+        V = rng.randn(10, 4)
+        result1 = canonicalize_abs(V)
+        # Flip some columns
+        V_flipped = V.copy()
+        V_flipped[:, 1] *= -1
+        V_flipped[:, 3] *= -1
+        result2 = canonicalize_abs(V_flipped)
+        np.testing.assert_array_almost_equal(result1, result2)
+
+    def test_idempotent(self):
+        """Applying abs twice should give the same result."""
+        V = np.array([[1, -2], [-3, 4]], dtype=float)
+        result1 = canonicalize_abs(V)
+        result2 = canonicalize_abs(result1)
+        np.testing.assert_array_almost_equal(result1, result2)
+
+    def test_values_correct(self):
+        """Check that output equals element-wise absolute value."""
+        V = np.array([[1, -2], [-3, 4]], dtype=float)
+        result = canonicalize_abs(V)
+        expected = np.array([[1, 2], [3, 4]], dtype=float)
+        np.testing.assert_array_almost_equal(result, expected)
+
+    def test_dispatcher(self):
+        """Dispatcher routes 'abs' correctly."""
+        V = np.array([[1, -2], [-3, 4]], dtype=float)
+        result = canonicalize(V, method="abs")
+        expected = np.abs(V)
+        np.testing.assert_array_almost_equal(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# TestSpielmanPartition
+# ---------------------------------------------------------------------------
+
+
+class TestSpielmanPartition:
+    """Tests for partial Spielman (initial partition only, no GF(2) refinement)."""
+
+    def test_sign_invariance(self):
+        """Flipping column signs should not change the canonicalized result."""
+        rng = np.random.RandomState(42)
+        V = rng.randn(8, 3)
+        eigenvalues = np.array([0.5, 1.2, 2.7])
+        result1 = spectral_canonicalize_partition(V, eigenvalues)
+        # Flip all signs
+        result2 = spectral_canonicalize_partition(-V, eigenvalues)
+        np.testing.assert_array_almost_equal(result1, result2)
+
+    def test_idempotent(self):
+        """Applying partial Spielman twice should give the same result."""
+        rng = np.random.RandomState(42)
+        V = rng.randn(8, 3)
+        eigenvalues = np.array([0.5, 1.2, 2.7])
+        result1 = spectral_canonicalize_partition(V, eigenvalues)
+        result2 = spectral_canonicalize_partition(result1, eigenvalues)
+        np.testing.assert_array_almost_equal(result1, result2)
+
+    def test_deterministic(self):
+        """Same input should give same output."""
+        V = np.random.RandomState(42).randn(8, 3)
+        eigenvalues = np.array([0.5, 1.2, 2.7])
+        result1 = spectral_canonicalize_partition(V, eigenvalues)
+        result2 = spectral_canonicalize_partition(V, eigenvalues)
+        np.testing.assert_array_almost_equal(result1, result2)
+
+    def test_multiplicity_columns_unchanged(self):
+        """Columns with repeated eigenvalues should not be modified."""
+        rng = np.random.RandomState(42)
+        V = rng.randn(6, 4)
+        # Eigenvalues: 1.0 has multiplicity 2
+        eigenvalues = np.array([0.5, 1.0, 1.0, 2.5])
+        result = spectral_canonicalize_partition(V, eigenvalues)
+        # Columns 1 and 2 (multiplicity 2) should be unchanged
+        np.testing.assert_array_almost_equal(result[:, 1], V[:, 1])
+        np.testing.assert_array_almost_equal(result[:, 2], V[:, 2])
+
+    def test_agrees_with_full_spielman_on_path_graph(self):
+        """On P5 (path graph), partition-only should produce same blocks as full.
+
+        For path graphs, the initial abs-value partition already separates
+        all nodes (no refinement needed), so results should match.
+        """
+        # P5 adjacency
+        A = np.zeros((5, 5))
+        for i in range(4):
+            A[i, i + 1] = 1
+            A[i + 1, i] = 1
+        D = np.diag(A.sum(axis=1))
+        L = D - A
+        eigenvalues, eigenvectors = np.linalg.eigh(L)
+        # Skip trivial eigenvector (λ=0)
+        eigenvalues = eigenvalues[1:]
+        eigenvectors = eigenvectors[:, 1:]
+
+        result_full = spectral_canonicalize(eigenvectors, eigenvalues)
+        result_part = spectral_canonicalize_partition(eigenvectors, eigenvalues)
+        np.testing.assert_array_almost_equal(result_full, result_part)
+
+    def test_dispatcher(self):
+        """Dispatcher routes 'spielman_partition' correctly."""
+        V = np.random.RandomState(42).randn(6, 3)
+        eigenvalues = np.array([0.5, 1.2, 2.7])
+        result1 = canonicalize(V, eigenvalues=eigenvalues, method="spielman_partition")
+        result2 = spectral_canonicalize_partition(V, eigenvalues)
+        np.testing.assert_array_almost_equal(result1, result2)
+
+    def test_empty(self):
+        """Empty eigenvectors should return empty."""
+        V = np.zeros((5, 0))
+        eigenvalues = np.array([])
+        result = spectral_canonicalize_partition(V, eigenvalues)
+        assert result.shape == (5, 0)
+
+
+# ---------------------------------------------------------------------------
+# TestScaleEigenvectorsByEigenvalues
+# ---------------------------------------------------------------------------
+
+
+class TestScaleEigenvectorsByEigenvalues:
+    """Tests for eigenvalue-scaled eigenvectors."""
+
+    def test_basic_scaling(self):
+        """Each column j should be divided by sqrt(eigenvalue[j])."""
+        V = np.ones((3, 2), dtype=float)
+        eigenvalues = np.array([4.0, 9.0])
+        result = scale_eigenvectors_by_eigenvalues(V, eigenvalues)
+        expected = np.array([[0.5, 1 / 3], [0.5, 1 / 3], [0.5, 1 / 3]])
+        np.testing.assert_array_almost_equal(result, expected)
+
+    def test_small_eigenvalue_unscaled(self):
+        """Eigenvalues near zero should leave the column unchanged."""
+        V = np.ones((3, 2), dtype=float)
+        eigenvalues = np.array([1e-10, 4.0])
+        result = scale_eigenvectors_by_eigenvalues(V, eigenvalues)
+        # Column 0: near-zero eigenvalue, left unchanged
+        np.testing.assert_array_almost_equal(result[:, 0], V[:, 0])
+        # Column 1: scaled by 1/sqrt(4) = 0.5
+        np.testing.assert_array_almost_equal(result[:, 1], 0.5 * np.ones(3))
+
+    def test_does_not_modify_input(self):
+        """Should return a copy, not modify in place."""
+        V = np.ones((3, 2), dtype=float)
+        eigenvalues = np.array([4.0, 9.0])
+        _ = scale_eigenvectors_by_eigenvalues(V, eigenvalues)
+        np.testing.assert_array_almost_equal(V, np.ones((3, 2)))
+
+    def test_preserves_shape(self):
+        """Output shape should match input."""
+        V = np.random.randn(10, 5)
+        eigenvalues = np.arange(1.0, 6.0)
+        result = scale_eigenvectors_by_eigenvalues(V, eigenvalues)
+        assert result.shape == V.shape

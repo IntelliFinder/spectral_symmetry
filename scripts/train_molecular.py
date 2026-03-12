@@ -164,6 +164,11 @@ def main():
         help="PE features: eigvec (eigenvectors), eigval (eigenvalues broadcast to nodes), "
         "both (concatenation)",
     )
+    parser.add_argument(
+        "--eigval-scale",
+        action="store_true",
+        help="Scale each eigenvector by 1/sqrt(eigenvalue) before using as PE",
+    )
 
     # Model
     parser.add_argument(
@@ -231,6 +236,7 @@ def main():
         n_eigs=args.n_eigs,
         data_dir=args.data_dir,
         cache_n_eigs=args.cache_n_eigs,
+        eigval_scale=args.eigval_scale,
     )
 
     split_idx = mol_dataset.get_split_indices()
@@ -377,6 +383,7 @@ def main():
         "canonicalization": args.canonicalization,
         "n_eigs": args.n_eigs,
         "pe_type": args.pe_type,
+        "eigval_scale": args.eigval_scale,
         "hidden_dim": args.hidden_dim,
         "num_layers": args.num_layers,
         "dropout": args.dropout,

@@ -29,6 +29,7 @@ from tqdm import tqdm
 from src.spectral_canonicalization import (
     CANONICALIZATION_METHODS,
     canonicalize,
+    scale_eigenvectors_by_eigenvalues,
 )
 from src.spectral_core import (
     _largest_connected_component,
@@ -181,6 +182,7 @@ class MolecularLapPEDataset:
         cache_dir=None,
         split=None,
         cache_n_eigs=None,
+        eigval_scale=False,
     ):
         if canonicalization not in CANONICALIZATION_METHODS:
             raise ValueError(
@@ -192,6 +194,7 @@ class MolecularLapPEDataset:
         self.canonicalization = canonicalization
         self.n_eigs = n_eigs
         self.split = split
+        self.eigval_scale = eigval_scale
 
         # cache_n_eigs: compute/cache this many eigenvectors, then slice to n_eigs
         # at runtime. Avoids redundant preprocessing when sweeping k values.
@@ -219,7 +222,9 @@ class MolecularLapPEDataset:
         # Exception: spielman needs per-k caches because its block structure depends
         # on which k eigenvectors are considered together.
         if cache_dir is None:
-            cache_k_for_path = n_eigs if canonicalization == "spielman" else self._cache_k
+            cache_k_for_path = (
+                n_eigs if canonicalization in ("spielman", "spielman_partition") else self._cache_k
+            )
             cache_dir = os.path.join(
                 data_dir, "lappe_cache", f"{dataset_name}_{canonicalization}_k{cache_k_for_path}"
             )
@@ -407,39 +412,11 @@ class MolecularLapPEDataset:
     def __getitem__(self, idx):
         """Return a PyG Data object augmented with LapPE.
 
-        Returns
-        -------
-        data : torch_geometric.data.Data with:
-            - x : Tensor (N, atom_dim), atom features
-            - x_pe : Tensor (N, n_eigs), LapPE features
-            - edge_index : LongTensor (2, E)
-            - y : Tensor (1, num_tasks), labels
+        Delegates to :meth:`_get_by_graph_idx`. When accessed directly
+        (not via :class:`_SplitView`), augmentation is enabled by default.
         """
         graph_idx = self.indices[idx]
-        data = self.ogb_dataset[graph_idx]
-
-        pe, evals = self._pe_data[graph_idx]
-
-        # Truncate to n_eigs if cache has more columns
-        k = self.n_eigs
-        pe = pe[:, :k]
-        evals = evals[:k]
-
-        # For random_augmented, apply random sign flips to cached eigenvectors
-        if self.canonicalization == "random_augmented":
-            signs = np.where(np.random.random(k) < 0.5, -1.0, 1.0).astype(np.float32)
-            pe = pe * signs  # broadcast (num_nodes, k) * (k,)
-
-        # Build output Data object
-        out = Data(
-            x=data.x.float() if data.x is not None else torch.zeros(data.num_nodes, 9),
-            x_pe=torch.from_numpy(pe).float(),
-            x_evals=torch.from_numpy(evals).float().unsqueeze(0).expand(data.num_nodes, -1),
-            edge_index=data.edge_index,
-            y=data.y,
-            graph_idx=torch.tensor([graph_idx], dtype=torch.long),
-        )
-        return out
+        return self._get_by_graph_idx(graph_idx, augment=True)
 
     def get_dataloader(self, split, batch_size=32, shuffle=True, num_workers=0, **kwargs):
         """Create a DataLoader for the given split.
@@ -491,6 +468,10 @@ class MolecularLapPEDataset:
         if self.canonicalization == "random_augmented" and augment:
             signs = np.where(np.random.random(k) < 0.5, -1.0, 1.0).astype(np.float32)
             pe = pe * signs  # broadcast (num_nodes, k) * (k,)
+
+        # Scale eigenvectors by 1/sqrt(eigenvalue) if requested
+        if self.eigval_scale:
+            pe = scale_eigenvectors_by_eigenvalues(pe, evals).astype(np.float32)
 
         out = Data(
             x=data.x.float() if data.x is not None else torch.zeros(data.num_nodes, 9),
