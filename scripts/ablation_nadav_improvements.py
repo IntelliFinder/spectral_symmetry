@@ -227,7 +227,7 @@ def build_commands(models, canons, k_values, hdims, seeds, eigval_scale_opts):
             "--num-layers",
             "5",
             "--epochs",
-            "100",
+            "50",
             "--batch-size",
             "32",
             "--lr",
@@ -235,7 +235,7 @@ def build_commands(models, canons, k_values, hdims, seeds, eigval_scale_opts):
             "--seed",
             str(seed),
             "--patience",
-            "20",
+            "10",
             "--save-dir",
             sd,
         ]
