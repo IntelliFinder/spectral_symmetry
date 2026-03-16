@@ -156,7 +156,7 @@ def load_ogb_dataset(dataset_name, data_dir="data"):
 # ── Main Analysis ────────────────────────────────────────────────────────────
 
 
-def run_analysis(dataset_name, k_values, output_dir):
+def run_analysis(dataset_name, k_values, output_dir, sample_n=None):
     """Run full analysis on a dataset."""
     print(f"\n{'=' * 70}")
     print(f"Spielman Refinement Analysis: {dataset_name}")
@@ -164,9 +164,16 @@ def run_analysis(dataset_name, k_values, output_dir):
     print(f"{'=' * 70}")
 
     graphs = load_ogb_dataset(dataset_name)
-    n_graphs = len(graphs)
-    print(f"Loaded {n_graphs} graphs")
+    n_total = len(graphs)
+    print(f"Loaded {n_total} graphs")
 
+    if sample_n is not None and sample_n < n_total:
+        rng = np.random.default_rng(42)
+        indices = rng.choice(n_total, size=sample_n, replace=False)
+        graphs = [graphs[i] for i in sorted(indices)]
+        print(f"  Sampled {sample_n} graphs (seed=42)")
+
+    n_graphs = len(graphs)
     all_results = []
     eigdecomp_times = {k: [] for k in k_values}
 
@@ -298,6 +305,12 @@ def main():
         default="results/nadav_improvements/plots",
         help="Output directory",
     )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="Randomly sample N graphs instead of scanning all (for large datasets)",
+    )
     args = parser.parse_args()
 
     datasets = []
@@ -308,7 +321,7 @@ def main():
 
     all_summary = []
     for ds in datasets:
-        summary, _ = run_analysis(ds, args.k, args.output_dir)
+        summary, _ = run_analysis(ds, args.k, args.output_dir, sample_n=args.sample)
         all_summary.extend(summary)
 
     # Write combined summary
