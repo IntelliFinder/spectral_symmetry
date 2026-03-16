@@ -53,15 +53,15 @@ CANONICALIZATIONS = [
 ]
 
 CANON_COLORS = {
-    "spielman": "#7b2d8e",        # purple
+    "spielman": "#7b2d8e",  # purple
     "spielman_partition": "#e74c3c",  # red
-    "maxabs": "#2980b9",          # blue
-    "random_fixed": "#000000",    # black
+    "maxabs": "#2980b9",  # blue
+    "random_fixed": "#000000",  # black
     "random_augmented": "#27ae60",  # green
-    "map": "#f39c12",             # gold/yellow
-    "oap": "#e91e63",             # pink
-    "abs": "#00bcd4",             # cyan
-    "none": "#7f8c8d",            # grey
+    "map": "#f39c12",  # gold/yellow
+    "oap": "#e91e63",  # pink
+    "abs": "#00bcd4",  # cyan
+    "none": "#7f8c8d",  # grey
 }
 
 CANON_LABELS = {
@@ -127,16 +127,17 @@ def load_results():
                 r.get("hidden_dim", 256),
                 r["seed"],
                 r.get("eigval_scale", False),
+                r.get("epochs", 50),
             )
             results[key] = r
     return results
 
 
-def aggregate(results, model, canon, k, h, eigval_scale=False):
+def aggregate(results, model, canon, k, h, eigval_scale=False, epochs=50):
     """Return (mean_ap, std_ap, n_seeds) for given params, or None."""
     vals = []
     for seed in SEEDS:
-        key = (model, canon, k, h, seed, eigval_scale)
+        key = (model, canon, k, h, seed, eigval_scale, epochs)
         if key in results:
             ap = results[key].get(METRIC_KEY)
             if ap is not None:
@@ -198,17 +199,27 @@ def prewarm_caches(canons, k_values, dataset="ogbg-molpcba", data_dir="data"):
 # ── Training Phase ───────────────────────────────────────────────────────────
 
 
-def build_commands(models, canons, k_values, hdims, seeds, eigval_scale_opts):
+def build_commands(
+    models,
+    canons,
+    k_values,
+    hdims,
+    seeds,
+    eigval_scale_opts,
+    epochs=50,
+    patience=10,
+    dir_suffix="",
+):
     """Build list of (name, cmd) tuples for all combos, skipping existing."""
     commands = []
     skipped = 0
     for model, canon, k, h, seed, evs in itertools.product(
         models, canons, k_values, hdims, seeds, eigval_scale_opts
     ):
-        if run_exists(model, canon, k, h, seed, evs):
+        sd = save_dir_for(model, canon, k, h, seed, evs) + dir_suffix
+        if os.path.exists(os.path.join(sd, "results.json")):
             skipped += 1
             continue
-        sd = save_dir_for(model, canon, k, h, seed, evs)
         cmd = [
             sys.executable,
             "scripts/train_molecular.py",
@@ -227,7 +238,7 @@ def build_commands(models, canons, k_values, hdims, seeds, eigval_scale_opts):
             "--num-layers",
             "5",
             "--epochs",
-            "50",
+            str(epochs),
             "--batch-size",
             "32",
             "--lr",
@@ -235,14 +246,14 @@ def build_commands(models, canons, k_values, hdims, seeds, eigval_scale_opts):
             "--seed",
             str(seed),
             "--patience",
-            "10",
+            str(patience),
             "--save-dir",
             sd,
         ]
         if evs:
             cmd.append("--eigval-scale")
         scale_tag = "_evscale" if evs else ""
-        name = f"{model}/{canon}_k{k}_h{h}_s{seed}{scale_tag}"
+        name = f"{model}/{canon}_k{k}_h{h}_s{seed}{scale_tag}{dir_suffix}"
         commands.append((name, cmd))
     return commands, skipped
 
@@ -299,8 +310,8 @@ def run_training(commands, dry_run=False, max_parallel=MAX_PARALLEL, gpus=None):
             i, (name, cmd) = queue.pop(0)
             gpu_label = f"GPU {gpu}" if gpu is not None else "default"
             print(f"  [START {i + 1}/{total}] {name} [{gpu_label}]")
-            parsed = _parse_name(name)
-            log_path = os.path.join(save_dir_for(*parsed), "train.log")
+            sd_idx = cmd.index("--save-dir") + 1
+            log_path = os.path.join(cmd[sd_idx], "train.log")
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             log_f = open(log_path, "w")
             env = os.environ.copy()
@@ -331,6 +342,8 @@ def run_training(commands, dry_run=False, max_parallel=MAX_PARALLEL, gpus=None):
 
 def write_summary_csv(results):
     """Write summary CSV."""
+    # Discover which epoch values appear in the results
+    all_epochs = sorted({key[6] for key in results})
     csv_path = os.path.join(PLOT_DIR, "summary_results.csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -341,6 +354,7 @@ def write_summary_csv(results):
                 "k",
                 "hidden_dim",
                 "eigval_scale",
+                "epochs",
                 "mean_ap",
                 "std_ap",
                 "n_seeds",
@@ -351,21 +365,23 @@ def write_summary_csv(results):
                 for k in K_VALUES:
                     for h in HIDDEN_DIMS:
                         for evs in EIGVAL_SCALE_OPTIONS:
-                            agg = aggregate(results, model, canon, k, h, evs)
-                            if agg is not None:
-                                mean_ap, std_ap, n = agg
-                                writer.writerow(
-                                    [
-                                        model,
-                                        canon,
-                                        k,
-                                        h,
-                                        evs,
-                                        f"{mean_ap:.6f}",
-                                        f"{std_ap:.6f}",
-                                        n,
-                                    ]
-                                )
+                            for ep in all_epochs:
+                                agg = aggregate(results, model, canon, k, h, evs, ep)
+                                if agg is not None:
+                                    mean_ap, std_ap, n = agg
+                                    writer.writerow(
+                                        [
+                                            model,
+                                            canon,
+                                            k,
+                                            h,
+                                            evs,
+                                            ep,
+                                            f"{mean_ap:.6f}",
+                                            f"{std_ap:.6f}",
+                                            n,
+                                        ]
+                                    )
     print(f"  Wrote {csv_path}")
 
 
@@ -438,8 +454,16 @@ def plot_ap_vs_hdim(results, model, k, eigval_scale=False):
         bar_colors = [CANON_COLORS.get(c, "#333333") for _, _, c in zoom_vals]
 
         y_pos = np.arange(len(zoom_vals))
-        axins.barh(y_pos, bar_means, xerr=bar_stds, color=bar_colors, capsize=2,
-                   edgecolor="white", linewidth=0.5, height=0.7)
+        axins.barh(
+            y_pos,
+            bar_means,
+            xerr=bar_stds,
+            color=bar_colors,
+            capsize=2,
+            edgecolor="white",
+            linewidth=0.5,
+            height=0.7,
+        )
         axins.set_yticks(y_pos)
         axins.set_yticklabels(bar_labels, fontsize=6)
         axins.set_xlabel(METRIC_LABEL, fontsize=7)
@@ -571,6 +595,53 @@ def plot_eigval_scale_effect(results, model, k):
     print(f"  Wrote {path}")
 
 
+def plot_epoch_comparison(results, model, k):
+    """Compare abs/none at different epoch counts vs sign-aware methods."""
+    all_epochs = sorted({key[6] for key in results})
+    if len(all_epochs) < 2:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    width = 0.8 / len(all_epochs)
+
+    canons_to_plot = CANONICALIZATIONS
+    x = np.arange(len(canons_to_plot))
+
+    for i, ep in enumerate(all_epochs):
+        means, stds = [], []
+        for canon in canons_to_plot:
+            agg = aggregate(results, model, canon, k, 128, False, ep)
+            means.append(agg[0] if agg else 0)
+            stds.append(agg[1] if agg else 0)
+        offset = (i - (len(all_epochs) - 1) / 2) * width
+        ax.bar(
+            x + offset,
+            means,
+            width,
+            yerr=stds,
+            label=f"epochs={ep}",
+            capsize=3,
+            alpha=0.8,
+        )
+
+    ax.set_xlabel("Canonicalization")
+    ax.set_ylabel(METRIC_LABEL)
+    ax.set_title(f"Epoch Ablation — {model.upper()} k={k} h=128")
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [CANON_LABELS[c] for c in canons_to_plot],
+        rotation=45,
+        ha="right",
+    )
+    ax.legend()
+    ax.grid(alpha=0.3, axis="y")
+    plt.tight_layout()
+    path = os.path.join(PLOT_DIR, f"epoch_comparison_{model}_k{k}.pdf")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"  Wrote {path}")
+
+
 def run_analysis(results):
     """Generate all plots and summary."""
     os.makedirs(PLOT_DIR, exist_ok=True)
@@ -584,6 +655,9 @@ def run_analysis(results):
     has_evs = {evs: False for evs in EIGVAL_SCALE_OPTIONS}
     for key in results:
         has_evs[key[5]] = True
+
+    # Check which epoch values appear
+    all_epochs = sorted({key[6] for key in results})
 
     # AP vs hidden dim (per model × k × eigval_scale)
     for model in MODELS:
@@ -609,6 +683,12 @@ def run_analysis(results):
         for model in MODELS:
             for k in K_VALUES:
                 plot_eigval_scale_effect(results, model, k)
+
+    # Epoch comparison (only if multiple epoch values exist)
+    if len(all_epochs) > 1:
+        for model in MODELS:
+            for k in K_VALUES:
+                plot_epoch_comparison(results, model, k)
 
     print(f"\n  All plots saved to {PLOT_DIR}/")
 
@@ -658,6 +738,18 @@ def main():
         action="store_true",
         help="Skip eigval-scale runs (only train without scaling)",
     )
+    parser.add_argument(
+        "--epochs", type=int, default=50, help="Number of training epochs (default: 50)"
+    )
+    parser.add_argument(
+        "--patience", type=int, default=10, help="Early stopping patience (default: 10)"
+    )
+    parser.add_argument(
+        "--dir-suffix",
+        type=str,
+        default="",
+        help="Suffix to append to save dirs (e.g. '_ep100' to avoid collisions)",
+    )
     args = parser.parse_args()
 
     models = args.model or MODELS
@@ -677,7 +769,17 @@ def main():
         prewarm_caches(canons, k_values)
 
     # Build and run training commands
-    commands, skipped = build_commands(models, canons, k_values, hdims, SEEDS, evs_opts)
+    commands, skipped = build_commands(
+        models,
+        canons,
+        k_values,
+        hdims,
+        SEEDS,
+        evs_opts,
+        epochs=args.epochs,
+        patience=args.patience,
+        dir_suffix=args.dir_suffix,
+    )
     total = len(commands) + skipped
     print(f"\nTotal configurations: {total} ({skipped} already done, {len(commands)} to run)")
 
