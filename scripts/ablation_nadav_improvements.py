@@ -54,7 +54,7 @@ CANONICALIZATIONS = [
 
 CANON_COLORS = {
     "spielman": "#9b59b6",
-    "spielman_partition": "#8e44ad",
+    "spielman_partition": "#c0392b",
     "maxabs": "#e74c3c",
     "random_fixed": "#3498db",
     "random_augmented": "#2ecc71",
