@@ -53,15 +53,15 @@ CANONICALIZATIONS = [
 ]
 
 CANON_COLORS = {
-    "spielman": "#7b2d8e",
-    "spielman_partition": "#e74c3c",
-    "maxabs": "#2980b9",
-    "random_fixed": "#27ae60",
-    "random_augmented": "#16a085",
-    "map": "#f39c12",
-    "oap": "#d35400",
-    "abs": "#e91e63",
-    "none": "#7f8c8d",
+    "spielman": "#7b2d8e",        # purple
+    "spielman_partition": "#e74c3c",  # red
+    "maxabs": "#2980b9",          # blue
+    "random_fixed": "#000000",    # black
+    "random_augmented": "#27ae60",  # green
+    "map": "#f39c12",             # gold/yellow
+    "oap": "#e91e63",             # pink
+    "abs": "#00bcd4",             # cyan
+    "none": "#7f8c8d",            # grey
 }
 
 CANON_LABELS = {
