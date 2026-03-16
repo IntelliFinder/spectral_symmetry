@@ -78,7 +78,7 @@ CANON_LABELS = {
 
 K_VALUES = [3, 6, 12]
 HIDDEN_DIMS = [16, 32, 64, 128, 256]
-MODELS = ["gin", "gcn"]
+MODELS = ["gin"]
 SEEDS = [0, 1, 2]
 EIGVAL_SCALE_OPTIONS = [False, True]
 CACHE_K = 15
