@@ -113,7 +113,10 @@ def analyze_graph(edge_index, num_nodes, k_values):
 
 
 def load_ogb_dataset(dataset_name, data_dir="data"):
-    """Load OGB dataset and return list of (edge_index, num_nodes)."""
+    """Load OGB dataset and return list of (edge_index, num_nodes).
+
+    Uses sliced tensor access for speed (avoids per-graph PyG deserialization).
+    """
     import torch
     import torch_geometric.data.data
     import torch_geometric.data.storage
@@ -131,12 +134,22 @@ def load_ogb_dataset(dataset_name, data_dir="data"):
     from ogb.graphproppred import PygGraphPropPredDataset
 
     dataset = PygGraphPropPredDataset(name=dataset_name, root=data_dir)
+
+    # Fast extraction via internal slices
+    data_obj, slices = dataset._data, dataset.slices
+    edge_index_all = data_obj.edge_index.numpy()
+    edge_slices = slices["edge_index"].numpy()
+    node_slices = slices["x"].numpy() if "x" in slices else None
+
+    n_graphs = len(edge_slices) - 1
     graphs = []
-    for i in range(len(dataset)):
-        data = dataset[i]
-        edge_index = data.edge_index.numpy()
-        num_nodes = int(data.num_nodes)
-        graphs.append((edge_index, num_nodes))
+    for i in range(n_graphs):
+        ei = edge_index_all[:, edge_slices[i] : edge_slices[i + 1]]
+        if node_slices is not None:
+            num_nodes = int(node_slices[i + 1] - node_slices[i])
+        else:
+            num_nodes = int(ei.max()) + 1 if ei.size > 0 else 0
+        graphs.append((ei, num_nodes))
     return graphs
 
 

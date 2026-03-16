@@ -53,15 +53,15 @@ CANONICALIZATIONS = [
 ]
 
 CANON_COLORS = {
-    "spielman": "#9b59b6",
-    "spielman_partition": "#c0392b",
-    "maxabs": "#e74c3c",
-    "random_fixed": "#3498db",
-    "random_augmented": "#2ecc71",
+    "spielman": "#7b2d8e",
+    "spielman_partition": "#e74c3c",
+    "maxabs": "#2980b9",
+    "random_fixed": "#27ae60",
+    "random_augmented": "#16a085",
     "map": "#f39c12",
-    "oap": "#e67e22",
-    "abs": "#1abc9c",
-    "none": "#95a5a6",
+    "oap": "#d35400",
+    "abs": "#e91e63",
+    "none": "#7f8c8d",
 }
 
 CANON_LABELS = {
@@ -530,27 +530,35 @@ def run_analysis(results):
 
     write_summary_csv(results)
 
+    # Check which eigval_scale options have data
+    has_evs = {evs: False for evs in EIGVAL_SCALE_OPTIONS}
+    for key in results:
+        has_evs[key[5]] = True
+
     # AP vs hidden dim (per model × k × eigval_scale)
     for model in MODELS:
         for k in K_VALUES:
             for evs in EIGVAL_SCALE_OPTIONS:
-                plot_ap_vs_hdim(results, model, k, evs)
+                if has_evs[evs]:
+                    plot_ap_vs_hdim(results, model, k, evs)
 
     # AP vs k (per model × representative h × eigval_scale)
     for model in MODELS:
         for h in [64, 128]:
             for evs in EIGVAL_SCALE_OPTIONS:
-                plot_ap_vs_k(results, model, h, evs)
+                if has_evs[evs]:
+                    plot_ap_vs_k(results, model, h, evs)
 
     # Spielman comparison (per model × k)
     for model in MODELS:
         for k in K_VALUES:
             plot_spielman_comparison(results, model, k)
 
-    # Eigenvalue scaling effect (per model × k)
-    for model in MODELS:
-        for k in K_VALUES:
-            plot_eigval_scale_effect(results, model, k)
+    # Eigenvalue scaling effect (only if both options have data)
+    if has_evs.get(True, False) and has_evs.get(False, False):
+        for model in MODELS:
+            for k in K_VALUES:
+                plot_eigval_scale_effect(results, model, k)
 
     print(f"\n  All plots saved to {PLOT_DIR}/")
 
