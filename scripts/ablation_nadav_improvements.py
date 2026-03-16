@@ -370,8 +370,14 @@ def write_summary_csv(results):
 
 
 def plot_ap_vs_hdim(results, model, k, eigval_scale=False):
-    """Plot AP vs hidden dim for all canonicalizations (one plot per model×k×evs)."""
-    fig, ax = plt.subplots(figsize=(8, 5))
+    """Plot AP vs hidden dim for all canonicalizations (one plot per model×k×evs).
+
+    Includes inset zoom panels at the two largest h-dim values where lines cluster.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Collect all data first for zoom range computation
+    all_data = {}
     for canon in CANONICALIZATIONS:
         means, stds, hs = [], [], []
         for h in HIDDEN_DIMS:
@@ -381,24 +387,68 @@ def plot_ap_vs_hdim(results, model, k, eigval_scale=False):
                 stds.append(agg[1])
                 hs.append(h)
         if means:
-            ax.errorbar(
-                hs,
-                means,
-                yerr=stds,
-                label=CANON_LABELS.get(canon, canon),
-                color=CANON_COLORS.get(canon, "#333333"),
-                marker="o",
-                capsize=3,
-            )
-    ax.set_xlabel("Hidden Dimension")
-    ax.set_ylabel(METRIC_LABEL)
+            all_data[canon] = (hs, means, stds)
+
+    # Plot main axes
+    for canon, (hs, means, stds) in all_data.items():
+        ax.errorbar(
+            hs,
+            means,
+            yerr=stds,
+            label=CANON_LABELS.get(canon, canon),
+            color=CANON_COLORS.get(canon, "#333333"),
+            marker="o",
+            capsize=3,
+            linewidth=1.5,
+        )
+
+    ax.set_xlabel("Hidden Dimension", fontsize=11)
+    ax.set_ylabel(METRIC_LABEL, fontsize=11)
     evs_tag = " (eigval-scaled)" if eigval_scale else ""
-    ax.set_title(f"{model.upper()} — k={k}{evs_tag}")
+    ax.set_title(f"{model.upper()} — k={k}{evs_tag}", fontsize=13)
     ax.set_xscale("log", base=2)
     ax.set_xticks(HIDDEN_DIMS)
     ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
-    ax.legend(fontsize=8, ncol=2)
+    ax.legend(fontsize=7, ncol=3, loc="lower right")
     ax.grid(alpha=0.3)
+
+    # Add inset zoom at the largest h-dim (most crowded region)
+    zoom_h = HIDDEN_DIMS[-1]  # e.g. 256
+    zoom_vals = []
+    for canon, (hs, means, stds) in all_data.items():
+        if zoom_h in hs:
+            idx = hs.index(zoom_h)
+            zoom_vals.append((means[idx], stds[idx], canon))
+
+    if len(zoom_vals) >= 3:
+        all_means = [v[0] for v in zoom_vals]
+        all_stds = [v[1] for v in zoom_vals]
+        y_min = min(m - s for m, s in zip(all_means, all_stds))
+        y_max = max(m + s for m, s in zip(all_means, all_stds))
+        y_pad = (y_max - y_min) * 0.15
+
+        # Inset axes (top-left area)
+        axins = ax.inset_axes([0.08, 0.52, 0.38, 0.42])
+
+        # Sort by mean AP for a bar chart in the inset
+        zoom_vals.sort(key=lambda x: x[0], reverse=True)
+        bar_labels = [CANON_LABELS.get(c, c) for _, _, c in zoom_vals]
+        bar_means = [m for m, _, _ in zoom_vals]
+        bar_stds = [s for _, s, _ in zoom_vals]
+        bar_colors = [CANON_COLORS.get(c, "#333333") for _, _, c in zoom_vals]
+
+        y_pos = np.arange(len(zoom_vals))
+        axins.barh(y_pos, bar_means, xerr=bar_stds, color=bar_colors, capsize=2,
+                   edgecolor="white", linewidth=0.5, height=0.7)
+        axins.set_yticks(y_pos)
+        axins.set_yticklabels(bar_labels, fontsize=6)
+        axins.set_xlabel(METRIC_LABEL, fontsize=7)
+        axins.set_xlim(y_min - y_pad, y_max + y_pad)
+        axins.tick_params(axis="x", labelsize=6)
+        axins.set_title(f"Zoom: h={zoom_h}", fontsize=8, fontweight="bold")
+        axins.grid(alpha=0.3, axis="x")
+        axins.invert_yaxis()
+
     plt.tight_layout()
     evs_suffix = "_evscale" if eigval_scale else ""
     path = os.path.join(PLOT_DIR, f"ap_vs_hdim_{model}_k{k}{evs_suffix}.pdf")
