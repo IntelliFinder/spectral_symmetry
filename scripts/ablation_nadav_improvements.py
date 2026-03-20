@@ -405,6 +405,12 @@ def plot_ap_vs_hdim(results, model, k, eigval_scale=False):
         if means:
             all_data[canon] = (hs, means, stds)
 
+    if not all_data:
+        plt.close(fig)
+        evs_tag = " (eigval-scaled)" if eigval_scale else ""
+        print(f"  Skipping {model.upper()} k={k}{evs_tag} — no data")
+        return
+
     # Plot main axes
     for canon, (hs, means, stds) in all_data.items():
         ax.errorbar(
