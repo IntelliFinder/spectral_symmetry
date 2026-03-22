@@ -1,6 +1,7 @@
 """Tests for Spielman-style spectral eigenvector canonicalization."""
 
 import numpy as np
+import pytest
 
 from src.spectral_canonicalization import (
     _gf2_null_space,
@@ -14,6 +15,7 @@ from src.spectral_canonicalization import (
     spectral_canonicalize,
     spectral_canonicalize_partition,
 )
+from src.spectral_core import detect_eigenvalue_multiplicities
 
 # ---------------------------------------------------------------------------
 # TestSolveZ2System
@@ -389,6 +391,300 @@ class TestAutomorphismInvariance:
                 col_exp = canon_permuted[:, j]
                 assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
                     f"C6 {sigma_name}, simple col {j}: not ±1 related"
+                )
+
+    def test_petersen_graph_up_to_column_signs(self):
+        """Petersen graph (10 nodes, |Aut| = 120): test two automorphisms.
+
+        The Petersen graph has eigenvalues 1 (mult 5) and 4 (mult 4) after
+        removing the trivial zero.  If all non-trivial eigenvalues have
+        multiplicity > 1 the simple_cols list is empty and we skip the
+        strict-equality-fails assertion, but still verify that the
+        up-to-column-signs loop holds vacuously.
+        """
+        import pytest
+
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        # Standard Petersen graph: outer 5-cycle 0-1-2-3-4,
+        # inner pentagram 5-7-9-6-8-5, spokes 0-5, 1-6, 2-7, 3-8, 4-9.
+        edges = [
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (4, 0),  # outer cycle
+            (5, 7),
+            (7, 9),
+            (9, 6),
+            (6, 8),
+            (8, 5),  # inner pentagram
+            (0, 5),
+            (1, 6),
+            (2, 7),
+            (3, 8),
+            (4, 9),  # spokes
+        ]
+        A = np.zeros((10, 10))
+        for i, j in edges:
+            A[i, j] = A[j, i] = 1.0
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if mult[j] == 1]
+
+        if not simple_cols:
+            pytest.skip(
+                "Petersen graph has no simple non-trivial eigenvalues; "
+                "up-to-column-signs holds vacuously"
+            )
+
+        canon_V = spectral_canonicalize(V, evals)
+
+        # Automorphism 1: rotation of outer cycle + corresponding inner shift.
+        # sigma: 0->1->2->3->4->0, 5->6->7->8->9->5
+        sigma1 = [1, 2, 3, 4, 0, 6, 7, 8, 9, 5]
+        # Automorphism 2: reflection of outer cycle (0 fixed, 1<->4, 2<->3) + inner.
+        # sigma: 0->0, 1->4, 2->3, 3->2, 4->1, 5->5, 6->9, 7->8, 8->7, 9->6
+        sigma2 = [0, 4, 3, 2, 1, 5, 9, 8, 7, 6]
+
+        for sigma_name, sigma in [("rotation", sigma1), ("reflection", sigma2)]:
+            canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+            canon_permuted = canon_V[sigma, :]
+            for j in simple_cols:
+                col_got = canon_sigma[:, j]
+                col_exp = canon_permuted[:, j]
+                assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                    f"Petersen {sigma_name}, simple col {j}: not ±1 related"
+                )
+
+    def test_cube_q3_automorphism_up_to_column_signs(self):
+        """Cube graph Q3 (8 nodes, |Aut| = 48): test two automorphisms.
+
+        Label nodes as 3-bit binary strings 0..7 where i~j iff they differ in
+        exactly one bit.  Laplacian eigenvalues: 0 (mult 1), 2 (mult 3),
+        4 (mult 3), 6 (mult 1).  The non-trivial simple eigenvalue is 6;
+        all eigenvalue-2 and eigenvalue-4 columns have multiplicity 3.
+        Strict equality should fail on the simple column for at least one
+        automorphism, while up-to-column-signs must hold for all.
+        """
+        import pytest
+
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        # Q3: nodes 0..7, i-j iff Hamming distance 1
+        A = np.zeros((8, 8))
+        for i in range(8):
+            for bit in range(3):
+                j = i ^ (1 << bit)
+                A[i, j] = 1.0
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if mult[j] == 1]
+
+        if not simple_cols:
+            pytest.skip("Cube Q3: no simple non-trivial eigenvalues found")
+
+        canon_V = spectral_canonicalize(V, evals)
+
+        # Automorphism 1: bit rotation  (b2 b1 b0) -> (b0 b2 b1)
+        def _rot_bits(i):
+            b0 = (i >> 0) & 1
+            b1 = (i >> 1) & 1
+            b2 = (i >> 2) & 1
+            return b0 | (b2 << 1) | (b1 << 2)
+
+        sigma1 = [_rot_bits(i) for i in range(8)]
+        # Automorphism 2: antipodal map  i -> i XOR 7
+        sigma2 = [i ^ 7 for i in range(8)]
+
+        # Strict equality should fail for at least one automorphism on a simple column
+        found_strict_failure = False
+        for sigma in [sigma1, sigma2]:
+            canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+            canon_permuted = canon_V[sigma, :]
+            if not np.allclose(
+                canon_sigma[:, simple_cols], canon_permuted[:, simple_cols]
+            ):
+                found_strict_failure = True
+                break
+        assert found_strict_failure, (
+            "Expected strict equivariance to fail for some Q3 automorphism on simple columns"
+        )
+
+        # Up-to-column-signs must hold for both automorphisms
+        for sigma_name, sigma in [("bit-rotation", sigma1), ("antipodal", sigma2)]:
+            canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+            canon_permuted = canon_V[sigma, :]
+            for j in simple_cols:
+                col_got = canon_sigma[:, j]
+                col_exp = canon_permuted[:, j]
+                assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                    f"Cube Q3 {sigma_name}, simple col {j}: not ±1 related"
+                )
+
+    def test_complete_bipartite_k33_up_to_column_signs(self):
+        """K_{3,3} (6 nodes): within-partition permutations are automorphisms.
+
+        Partition U = {0,1,2}, W = {3,4,5}.  Non-trivial Laplacian eigenvalues:
+        3 (mult 4) and 6 (mult 1).  The simple column corresponds to the
+        bipartition indicator vector.  Strict equality should fail for at least
+        one automorphism; up-to-column-signs must hold for all.
+        """
+        import pytest
+
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        # K_{3,3}: U={0,1,2} fully connected to W={3,4,5}
+        A = np.zeros((6, 6))
+        for u in range(3):
+            for w in range(3, 6):
+                A[u, w] = A[w, u] = 1.0
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if mult[j] == 1]
+
+        if not simple_cols:
+            pytest.skip("K_{3,3}: no simple non-trivial eigenvalues")
+
+        canon_V = spectral_canonicalize(V, evals)
+
+        # Automorphism 1: swap the two partition sides entirely (U <-> W).
+        # This maps (0,1,2) -> (3,4,5) and (3,4,5) -> (0,1,2).
+        # The eigenvalue-6 eigenvector is ±(1/√6)[+,+,+,-,-,-], so swapping
+        # partitions negates it — strict equality FAILS on the simple column.
+        sigma1 = [3, 4, 5, 0, 1, 2]
+        # Automorphism 2: cycle within U (0->1->2->0), W unchanged.
+        # Within-partition permutations preserve the eigenvalue-6 eigenvector
+        # (it is constant within each partition), so strict equality holds here.
+        sigma2 = [1, 2, 0, 3, 4, 5]
+
+        # Strict equality should fail for the bipartition-swap automorphism
+        canon_sigma1 = spectral_canonicalize(V[sigma1, :], evals)
+        canon_permuted1 = canon_V[sigma1, :]
+        assert not np.allclose(
+            canon_sigma1[:, simple_cols], canon_permuted1[:, simple_cols]
+        ), "Expected strict equivariance to fail for K_{3,3} bipartition-swap automorphism"
+
+        # Up-to-column-signs must hold for both automorphisms
+        for sigma_name, sigma in [("bipart-swap", sigma1), ("U-cycle", sigma2)]:
+            canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+            canon_permuted = canon_V[sigma, :]
+            for j in simple_cols:
+                col_got = canon_sigma[:, j]
+                col_exp = canon_permuted[:, j]
+                assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                    f"K_{{3,3}} {sigma_name}, simple col {j}: not ±1 related"
+                )
+
+    def test_path_p7_automorphism_up_to_column_signs(self):
+        """P7 (7 nodes): reflection automorphism 0<->6, 1<->5, 2<->4, 3 fixed.
+
+        All eigenvalues of P7 are simple, so every non-trivial column is a
+        simple column.  Strict equality should fail (the reflection changes
+        within-block ordering for at least one column); up-to-column-signs
+        must hold for every column.
+        """
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        A = np.zeros((7, 7))
+        for i in range(6):
+            A[i, i + 1] = A[i + 1, i] = 1.0
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if mult[j] == 1]
+
+        # P7 has all simple eigenvalues — every non-trivial column is simple
+        assert len(simple_cols) == len(evals), "P7 should have all simple eigenvalues"
+
+        canon_V = spectral_canonicalize(V, evals)
+
+        # Reflection: 0<->6, 1<->5, 2<->4, 3 fixed
+        sigma = [6, 5, 4, 3, 2, 1, 0]
+
+        canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+        canon_permuted = canon_V[sigma, :]
+
+        # Strict equality should fail for at least one simple column
+        assert not np.allclose(
+            canon_sigma[:, simple_cols], canon_permuted[:, simple_cols]
+        ), "Expected strict equivariance to fail under P7 reflection automorphism"
+
+        # Up-to-column-signs must hold for every simple column
+        for j in simple_cols:
+            col_got = canon_sigma[:, j]
+            col_exp = canon_permuted[:, j]
+            assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                f"P7 reflection, simple col {j}: not ±1 related.\n"
+                f"  got:      {np.round(col_got, 6)}\n"
+                f"  expected: {np.round(col_exp, 6)}"
+            )
+
+    def test_star_k1_5_automorphism_up_to_column_signs(self):
+        """Star K_{1,5} (6 nodes): any leaf permutation is an automorphism.
+
+        Node 0 is the hub; nodes 1-5 are leaves.  Non-trivial Laplacian
+        eigenvalues: 1 (mult 4) and 6 (mult 1).  The simple column
+        (eigenvalue 6) corresponds to hub-vs-leaves.  Test a transposition
+        and a 5-cycle of leaves; up-to-column-signs must hold for both.
+        """
+        import pytest
+
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        # K_{1,5}: hub=0, leaves=1..5
+        A = np.zeros((6, 6))
+        for leaf in range(1, 6):
+            A[0, leaf] = A[leaf, 0] = 1.0
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if mult[j] == 1]
+
+        if not simple_cols:
+            pytest.skip("K_{1,5}: no simple non-trivial eigenvalues")
+
+        canon_V = spectral_canonicalize(V, evals)
+
+        # Automorphism 1: swap leaves 1 and 2, rest unchanged
+        sigma1 = [0, 2, 1, 3, 4, 5]
+        # Automorphism 2: 5-cycle of leaves  1->2->3->4->5->1
+        sigma2 = [0, 2, 3, 4, 5, 1]
+
+        # Up-to-column-signs must hold for both automorphisms
+        for sigma_name, sigma in [("leaf-swap", sigma1), ("leaf-5cycle", sigma2)]:
+            canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+            canon_permuted = canon_V[sigma, :]
+            for j in simple_cols:
+                col_got = canon_sigma[:, j]
+                col_exp = canon_permuted[:, j]
+                assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                    f"K_{{1,5}} {sigma_name}, simple col {j}: not ±1 related.\n"
+                    f"  got:      {np.round(col_got, 6)}\n"
+                    f"  expected: {np.round(col_exp, 6)}"
                 )
 
 
@@ -1082,3 +1378,734 @@ class TestScaleEigenvectorsByEigenvalues:
         eigenvalues = np.arange(1.0, 6.0)
         result = scale_eigenvectors_by_eigenvalues(V, eigenvalues)
         assert result.shape == V.shape
+
+
+# ---------------------------------------------------------------------------
+# TestAutomorphismStress
+# ---------------------------------------------------------------------------
+
+
+class TestAutomorphismStress:
+    """Stress tests for up-to-column-signs invariance under graph automorphisms.
+
+    For any graph automorphism sigma, the canonicalized eigenvectors satisfy:
+        canon(P_sigma V) = P_sigma * canon(V) * diag(d)
+    for some sign vector d in {+-1}^k.  Only simple-spectrum columns are
+    checked; repeated-eigenvalue columns are left unchanged by design.
+
+    Graphs used and their key properties:
+      - C_10(1,5): circulant, 3-regular, n=10, rotation automorphism, 1 simple col
+      - 6-prism (hexagonal prism): 3-regular, n=12, 3 simple cols, rich Aut group
+      - C_14(1,7): circulant, 3-regular, n=14, rotation automorphism, 1 simple col
+      - C6 (6-cycle): 2-regular, n=6, mixed multiplicities (1 simple + 4 repeated cols)
+      - P_n (path graphs): n=5,7,9,11 — reflection automorphism, all simple cols
+    """
+
+    @staticmethod
+    def _laplacian(A):
+        D = np.diag(A.sum(axis=1))
+        return D - A
+
+    @staticmethod
+    def _is_automorphism(A, sigma):
+        """Check if sigma is a graph automorphism."""
+        n = A.shape[0]
+        P = np.zeros((n, n))
+        for i, j in enumerate(sigma):
+            P[i, j] = 1
+        return np.allclose(P @ A @ P.T, A)
+
+    @staticmethod
+    def _check_up_to_column_signs(canon_sigma, canon_permuted, cols):
+        """Assert columns are related by +-1."""
+        for j in cols:
+            col_got = canon_sigma[:, j]
+            col_exp = canon_permuted[:, j]
+            assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                f"Column {j}: not +-1 related"
+            )
+
+    # ------------------------------------------------------------------
+    # Graph construction helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _path_graph(n):
+        """Return adjacency matrix of path graph P_n."""
+        A = np.zeros((n, n))
+        for i in range(n - 1):
+            A[i, i + 1] = A[i + 1, i] = 1
+        return A
+
+    @staticmethod
+    def _c10_15_graph():
+        """Circulant C_10(1,5): 3-regular, n=10.
+
+        Connects each node i to (i+1)%10 (cycle) and (i+5)%10 (perfect matching).
+        Rotation sigma(i)=(i+1)%10 is a known automorphism.
+        Laplacian: 1 simple eigenvalue column, 8 repeated.
+        """
+        A = np.zeros((10, 10))
+        for i in range(10):
+            A[i, (i + 1) % 10] = A[(i + 1) % 10, i] = 1
+            A[i, (i + 5) % 10] = A[(i + 5) % 10, i] = 1
+        return A
+
+    @staticmethod
+    def _prism6_graph():
+        """Hexagonal prism (6-prism): 3-regular, n=12.
+
+        Two hexagons (0-1-2-3-4-5-0 and 6-7-8-9-10-11-6) connected by 6 spokes (i -- i+6).
+        Automorphisms include: rotation by 1 in each ring, layer swap, reflection.
+        Laplacian: 3 simple eigenvalue columns (indices 2, 7, 10 in the non-trivial spectrum).
+        """
+        A = np.zeros((12, 12))
+        for i in range(6):
+            A[i, (i + 1) % 6] = A[(i + 1) % 6, i] = 1
+            A[6 + i, 6 + (i + 1) % 6] = A[6 + (i + 1) % 6, 6 + i] = 1
+            A[i, 6 + i] = A[6 + i, i] = 1
+        return A
+
+    @staticmethod
+    def _c14_17_graph():
+        """Circulant C_14(1,7): 3-regular, n=14.
+
+        Connects each node i to (i+1)%14 (cycle) and (i+7)%14 (perfect matching).
+        Rotation sigma(i)=(i+1)%14 is a known automorphism.
+        Laplacian: 1 simple eigenvalue column, 12 repeated.
+        """
+        A = np.zeros((14, 14))
+        for i in range(14):
+            A[i, (i + 1) % 14] = A[(i + 1) % 14, i] = 1
+            A[i, (i + 7) % 14] = A[(i + 7) % 14, i] = 1
+        return A
+
+    @staticmethod
+    def _c6_graph():
+        """Return C6 (6-cycle) adjacency matrix.
+
+        C6 Laplacian non-trivial spectrum: eigenvalue 1 (x2), 3 (x2), 4 (x1).
+        Mixed multiplicities: 1 simple col, 4 repeated cols.
+        """
+        n = 6
+        A = np.zeros((n, n))
+        for i in range(n):
+            A[i, (i + 1) % n] = A[(i + 1) % n, i] = 1
+        return A
+
+    @staticmethod
+    def _get_simple_cols(evals):
+        """Return column indices with eigenvalue multiplicity == 1."""
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        return [j for j in range(len(evals)) if mult[j] == 1]
+
+    def _eigenpairs(self, A):
+        """Return (evals_nontriv, V_nontriv) for the graph Laplacian of A."""
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        return eigvals[nontriv], eigvecs[:, nontriv]
+
+    def _assert_auto_up_to_col_signs(self, A, sigma, label=""):
+        """Core helper: verify up-to-col-signs for a single known automorphism."""
+        assert self._is_automorphism(A, sigma), f"sigma is not an automorphism {label}"
+        evals, V = self._eigenpairs(A)
+        simple_cols = self._get_simple_cols(evals)
+        assert simple_cols, f"No simple-spectrum columns {label}"
+        canon_V = spectral_canonicalize(V, evals)
+        canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+        canon_permuted = canon_V[sigma, :]
+        self._check_up_to_column_signs(canon_sigma, canon_permuted, simple_cols)
+
+    # ------------------------------------------------------------------
+    # 1. Random regular graphs (degree 3, n=10,12,14)
+    #    Use explicit known automorphisms — random sampling over n! is
+    #    statistically impractical for the number of automorphisms present.
+    # ------------------------------------------------------------------
+
+    def test_c10_15_rotation_automorphism(self):
+        """C_10(1,5), 3-regular n=10: rotation by 1 satisfies up-to-col-signs."""
+        A = self._c10_15_graph()
+        sigma_rot = [(i + 1) % 10 for i in range(10)]
+        self._assert_auto_up_to_col_signs(A, sigma_rot, label="C_10(1,5) rotation")
+
+    def test_c10_15_reflection_automorphism(self):
+        """C_10(1,5), 3-regular n=10: reflection sigma(i)=(10-i)%10 satisfies up-to-col-signs."""
+        A = self._c10_15_graph()
+        sigma_ref = [(10 - i) % 10 for i in range(10)]
+        self._assert_auto_up_to_col_signs(A, sigma_ref, label="C_10(1,5) reflection")
+
+    def test_prism6_rotation_automorphism(self):
+        """6-prism, 3-regular n=12: synchronous rotation of both rings satisfies up-to-col-signs."""
+        A = self._prism6_graph()
+        # Rotate both hexagonal rings by 1 step simultaneously
+        sigma_rot = [(i + 1) % 6 for i in range(6)] + [6 + (i + 1) % 6 for i in range(6)]
+        self._assert_auto_up_to_col_signs(A, sigma_rot, label="6-prism rotation")
+
+    def test_prism6_layer_swap_automorphism(self):
+        """6-prism, 3-regular n=12: swapping the two hexagonal layers satisfies up-to-col-signs."""
+        A = self._prism6_graph()
+        # Swap outer ring (0..5) with inner ring (6..11)
+        sigma_swap = list(range(6, 12)) + list(range(6))
+        self._assert_auto_up_to_col_signs(A, sigma_swap, label="6-prism layer swap")
+
+    def test_c14_17_rotation_automorphism(self):
+        """C_14(1,7), 3-regular n=14: rotation by 1 satisfies up-to-col-signs."""
+        A = self._c14_17_graph()
+        sigma_rot = [(i + 1) % 14 for i in range(14)]
+        self._assert_auto_up_to_col_signs(A, sigma_rot, label="C_14(1,7) rotation")
+
+    # ------------------------------------------------------------------
+    # 2. Composition test: apply multiple automorphisms in sequence
+    # ------------------------------------------------------------------
+
+    def test_composition_of_automorphisms_prism6(self):
+        """6-prism: rotation, reflection, and their composition each satisfy up-to-col-signs."""
+        A = self._prism6_graph()
+        # Rotation of both rings by 1
+        sigma1 = [(i + 1) % 6 for i in range(6)] + [6 + (i + 1) % 6 for i in range(6)]
+        # Reflection of both rings: sigma(i) = (6-i)%6 for outer, idem for inner
+        sigma2 = [(6 - i) % 6 for i in range(6)] + [6 + (6 - i) % 6 for i in range(6)]
+        # Layer swap
+        sigma3 = list(range(6, 12)) + list(range(6))
+
+        for name, s in [("sigma1", sigma1), ("sigma2", sigma2), ("sigma3", sigma3)]:
+            assert self._is_automorphism(A, s), f"{name} must be a valid 6-prism automorphism"
+
+        # Compositions
+        comp12 = [sigma2[sigma1[i]] for i in range(12)]
+        comp13 = [sigma3[sigma1[i]] for i in range(12)]
+        comp123 = [sigma3[sigma2[sigma1[i]]] for i in range(12)]
+
+        for name, s in [
+            ("comp(sigma2 o sigma1)", comp12),
+            ("comp(sigma3 o sigma1)", comp13),
+            ("comp(sigma3 o sigma2 o sigma1)", comp123),
+        ]:
+            assert self._is_automorphism(A, s), f"{name} must be a valid automorphism"
+
+        evals, V = self._eigenpairs(A)
+        simple_cols = self._get_simple_cols(evals)
+        assert simple_cols, "6-prism must have simple-spectrum columns"
+
+        canon_V = spectral_canonicalize(V, evals)
+
+        for sigma_name, sigma in [
+            ("sigma1", sigma1),
+            ("sigma2", sigma2),
+            ("sigma3", sigma3),
+            ("sigma2 o sigma1", comp12),
+            ("sigma3 o sigma1", comp13),
+            ("sigma3 o sigma2 o sigma1", comp123),
+        ]:
+            canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+            canon_permuted = canon_V[sigma, :]
+            for j in simple_cols:
+                col_got = canon_sigma[:, j]
+                col_exp = canon_permuted[:, j]
+                assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                    f"Composition ({sigma_name}), col {j}: not +-1 related"
+                )
+
+    def test_composition_path_p9_reflection_involution(self):
+        """P9 reflection sigma^2 = id: both sigma and sigma^2 satisfy up-to-col-signs."""
+        n = 9
+        A = self._path_graph(n)
+        sigma = [n - 1 - i for i in range(n)]
+        sigma2 = [sigma[sigma[i]] for i in range(n)]
+        assert sigma2 == list(range(n)), "sigma^2 must equal identity"
+        assert self._is_automorphism(A, sigma)
+
+        evals, V = self._eigenpairs(A)
+        simple_cols = self._get_simple_cols(evals)
+        if not simple_cols:
+            pytest.skip("No simple-spectrum columns on P9")
+
+        canon_V = spectral_canonicalize(V, evals)
+
+        # First application: sigma
+        canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+        canon_permuted = canon_V[sigma, :]
+        self._check_up_to_column_signs(canon_sigma, canon_permuted, simple_cols)
+
+        # Second application: sigma^2 = identity
+        canon_sigma2 = spectral_canonicalize(V[sigma2, :], evals)
+        canon_permuted2 = canon_V[sigma2, :]
+        self._check_up_to_column_signs(canon_sigma2, canon_permuted2, simple_cols)
+
+    # ------------------------------------------------------------------
+    # 3. All automorphisms of P5
+    # ------------------------------------------------------------------
+
+    def test_p5_identity_automorphism(self):
+        """P5 identity automorphism trivially satisfies up-to-col-signs."""
+        A = self._path_graph(5)
+        evals, V = self._eigenpairs(A)
+        simple_cols = self._get_simple_cols(evals)
+
+        sigma_id = list(range(5))
+        assert self._is_automorphism(A, sigma_id)
+
+        canon_V = spectral_canonicalize(V, evals)
+        canon_sigma = spectral_canonicalize(V[sigma_id, :], evals)
+        canon_permuted = canon_V[sigma_id, :]
+        self._check_up_to_column_signs(canon_sigma, canon_permuted, simple_cols)
+
+    def test_p5_nontrivial_automorphism(self):
+        """P5 reflection (04)(13) satisfies up-to-col-signs invariance."""
+        A = self._path_graph(5)
+        evals, V = self._eigenpairs(A)
+        simple_cols = self._get_simple_cols(evals)
+
+        sigma = [4, 3, 2, 1, 0]
+        assert self._is_automorphism(A, sigma), "Reflection must be a valid automorphism of P5"
+
+        canon_V = spectral_canonicalize(V, evals)
+        canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+        canon_permuted = canon_V[sigma, :]
+        self._check_up_to_column_signs(canon_sigma, canon_permuted, simple_cols)
+
+    def test_p5_automorphism_group_is_complete(self):
+        """P5 automorphism group has exactly 2 elements: id and (04)(13)."""
+        from itertools import permutations
+
+        A = self._path_graph(5)
+        autos = [list(p) for p in permutations(range(5)) if self._is_automorphism(A, list(p))]
+        assert len(autos) == 2, f"P5 must have exactly 2 automorphisms, found {len(autos)}"
+        assert list(range(5)) in autos
+        assert [4, 3, 2, 1, 0] in autos
+
+    # ------------------------------------------------------------------
+    # 4. Parametric path graphs P_n
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("n", [5, 7, 9, 11])
+    def test_path_graph_reflection_up_to_column_signs(self, n):
+        """P_n reflection sigma(i)=n-1-i satisfies up-to-col-signs on all simple columns."""
+        A = self._path_graph(n)
+        sigma = [n - 1 - i for i in range(n)]
+        assert self._is_automorphism(A, sigma), f"Reflection must be automorphism of P{n}"
+
+        evals, V = self._eigenpairs(A)
+        simple_cols = self._get_simple_cols(evals)
+        if not simple_cols:
+            pytest.skip(f"No simple-spectrum columns on P{n}")
+
+        canon_V = spectral_canonicalize(V, evals)
+        canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+        canon_permuted = canon_V[sigma, :]
+        self._check_up_to_column_signs(canon_sigma, canon_permuted, simple_cols)
+
+    @pytest.mark.parametrize("n", [5, 7, 9, 11])
+    def test_path_graph_reflection_idempotent(self, n):
+        """canon(canon(V[sigma])) == canon(V[sigma]) for P_n reflected eigenvectors."""
+        A = self._path_graph(n)
+        sigma = [n - 1 - i for i in range(n)]
+
+        evals, V = self._eigenpairs(A)
+        V_sigma = V[sigma, :]
+        canon1 = spectral_canonicalize(V_sigma, evals)
+        canon2 = spectral_canonicalize(canon1, evals)
+        np.testing.assert_array_almost_equal(canon1, canon2)
+
+    # ------------------------------------------------------------------
+    # 5. Eigenvalue multiplicity edge case
+    # ------------------------------------------------------------------
+
+    def test_mixed_multiplicity_simple_cols_up_to_signs(self):
+        """C6 rotation: simple-spectrum columns satisfy up-to-col-signs; repeated are unchanged."""
+        A = self._c6_graph()
+        evals, V = self._eigenpairs(A)
+
+        mult_info = detect_eigenvalue_multiplicities(evals)
+        multiplicity = mult_info["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if multiplicity[j] == 1]
+        repeated_cols = [j for j in range(len(evals)) if multiplicity[j] > 1]
+
+        sigma = [(i + 1) % 6 for i in range(6)]
+        assert self._is_automorphism(A, sigma), "Rotation must be automorphism of C6"
+
+        canon_V = spectral_canonicalize(V, evals)
+        canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+        canon_permuted = canon_V[sigma, :]
+
+        # Simple columns must satisfy up-to-col-signs
+        if simple_cols:
+            self._check_up_to_column_signs(canon_sigma, canon_permuted, simple_cols)
+
+        # Repeated columns: spectral_canonicalize leaves them as-is (copy of input),
+        # so both canon(V[sigma])[:,j] and canon(V)[sigma][:,j] equal V[sigma][:,j].
+        for j in repeated_cols:
+            np.testing.assert_array_almost_equal(
+                canon_sigma[:, j],
+                V[sigma, j],
+                err_msg=f"Repeated col {j} should equal V[sigma][:,j] in canon(V[sigma])",
+            )
+            np.testing.assert_array_almost_equal(
+                canon_permuted[:, j],
+                V[sigma, j],
+                err_msg=f"Repeated col {j} should equal V[sigma][:,j] in canon(V)[sigma]",
+            )
+
+    def test_mixed_multiplicity_repeated_cols_left_unchanged(self):
+        """C6: columns with repeated eigenvalues are never modified by canonicalization."""
+        A = self._c6_graph()
+        evals, V = self._eigenpairs(A)
+
+        mult_info = detect_eigenvalue_multiplicities(evals)
+        multiplicity = mult_info["multiplicity"]
+        repeated_cols = [j for j in range(len(evals)) if multiplicity[j] > 1]
+
+        if not repeated_cols:
+            pytest.skip("C6 non-trivial spectrum has no repeated eigenvalues")
+
+        result = spectral_canonicalize(V, evals)
+        for j in repeated_cols:
+            np.testing.assert_array_equal(
+                result[:, j],
+                V[:, j],
+                err_msg=f"Column {j} (multiplicity>1) must not be modified",
+            )
+
+    def test_mixed_multiplicity_simple_cols_sign_invariant(self):
+        """C6 simple-spectrum columns are invariant under arbitrary column sign flips."""
+        A = self._c6_graph()
+        evals, V = self._eigenpairs(A)
+
+        mult_info = detect_eigenvalue_multiplicities(evals)
+        multiplicity = mult_info["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if multiplicity[j] == 1]
+
+        if not simple_cols:
+            pytest.skip("No simple-spectrum columns on C6 non-trivial spectrum")
+
+        canon_V = spectral_canonicalize(V, evals)
+        rng = np.random.default_rng(42)
+
+        for _ in range(10):
+            signs = rng.choice([-1.0, 1.0], size=len(evals))
+            V_signed = V * signs[np.newaxis, :]
+            canon_signed = spectral_canonicalize(V_signed, evals)
+            for j in simple_cols:
+                np.testing.assert_array_almost_equal(
+                    canon_signed[:, j],
+                    canon_V[:, j],
+                    err_msg=f"Simple col {j}: sign flip changed canonical result",
+                )
+
+
+# ---------------------------------------------------------------------------
+# TestEigendecompositionEquivalence
+# ---------------------------------------------------------------------------
+
+
+class TestEigendecompositionEquivalence:
+    """Verify that canonicalization preserves the eigendecomposition and that
+    all column-sign representatives in the same orbit map to equivalent results.
+
+    Key identity tested throughout:
+        L = V @ diag(eigenvalues) @ V.T   (for simple-spectrum columns)
+
+    Equivalence relation: V1 ~ V2  iff  V2 = V1 @ diag(d)  for some d in {+/-1}^k.
+    """
+
+    @staticmethod
+    def _laplacian(A):
+        D = np.diag(A.sum(axis=1))
+        return D - A
+
+    # ------------------------------------------------------------------
+    # Graph builders
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _path_graph(n):
+        """Return adjacency matrix for path graph P_n (0-1-..-(n-1))."""
+        A = np.zeros((n, n))
+        for i in range(n - 1):
+            A[i, i + 1] = A[i + 1, i] = 1.0
+        return A
+
+    @staticmethod
+    def _cycle_graph(n):
+        """Return adjacency matrix for cycle graph C_n."""
+        A = np.zeros((n, n))
+        for i in range(n):
+            A[i, (i + 1) % n] = A[(i + 1) % n, i] = 1.0
+        return A
+
+    @staticmethod
+    def _random_graph(n, seed):
+        """Return a connected random weighted graph adjacency matrix."""
+        rng = np.random.default_rng(seed)
+        A = np.zeros((n, n))
+        # Spanning tree for connectivity
+        for i in range(1, n):
+            j = rng.integers(0, i)
+            w = rng.uniform(0.5, 2.0)
+            A[i, j] = A[j, i] = w
+        # Extra random edges
+        for _ in range(n):
+            i, j = rng.integers(0, n, size=2)
+            if i != j:
+                w = rng.uniform(0.5, 2.0)
+                A[i, j] = A[j, i] = w
+        return A
+
+    def _simple_spectrum_eigenpairs(self, L):
+        """Return (eigenvalues, eigenvectors) restricted to simple-spectrum columns."""
+        eigvals, eigvecs = np.linalg.eigh(L)
+        mult = detect_eigenvalue_multiplicities(eigvals)["multiplicity"]
+        simple = [j for j in range(len(eigvals)) if mult[j] == 1]
+        return eigvals[simple], eigvecs[:, simple]
+
+    @staticmethod
+    def _are_col_sign_equivalent(V1, V2, atol=1e-7):
+        """Return True iff V2 = V1 @ diag(d) for some d in {+/-1}^k."""
+        if V1.shape != V2.shape:
+            return False
+        for j in range(V1.shape[1]):
+            same = np.allclose(V1[:, j], V2[:, j], atol=atol)
+            flipped = np.allclose(V1[:, j], -V2[:, j], atol=atol)
+            if not (same or flipped):
+                return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Test 1: Reconstruction
+    # ------------------------------------------------------------------
+
+    def test_reconstruction_several_graphs(self):
+        """canon(V) @ diag(lam) @ canon(V).T reconstructs the Laplacian
+        restricted to simple-spectrum columns, for P5, P7, C5, C7, and a
+        random graph.  Proves canonicalization preserves the eigendecomposition."""
+        graphs = [
+            ("P5", self._path_graph(5)),
+            ("P7", self._path_graph(7)),
+            ("C5", self._cycle_graph(5)),
+            ("C7", self._cycle_graph(7)),
+            ("random_8", self._random_graph(8, seed=2024)),
+        ]
+
+        for name, A in graphs:
+            L = self._laplacian(A)
+            evals, V = self._simple_spectrum_eigenpairs(L)
+
+            if V.size == 0:
+                continue
+
+            canon_V = spectral_canonicalize(V, evals)
+
+            # Reconstruction: sum_j lam_j * v_j v_j^T  (sign changes cancel in outer product)
+            L_reconstructed = (canon_V * evals[np.newaxis, :]) @ canon_V.T
+            L_projected = (V * evals[np.newaxis, :]) @ V.T
+
+            np.testing.assert_allclose(
+                L_reconstructed,
+                L_projected,
+                atol=1e-10,
+                err_msg=f"{name}: reconstructed Laplacian mismatch after canonicalization",
+            )
+
+    # ------------------------------------------------------------------
+    # Test 2: Gram matrix invariance
+    # ------------------------------------------------------------------
+
+    def test_gram_matrix_invariance(self):
+        """canon(V).T @ canon(V) equals the identity for orthonormal V,
+        regardless of which sign convention was applied before canonicalization.
+
+        Column sign flips are isometries, so the Gram matrix must be preserved."""
+        graphs = [
+            ("P5", self._path_graph(5)),
+            ("P7", self._path_graph(7)),
+            ("C5", self._cycle_graph(5)),
+            ("random_8", self._random_graph(8, seed=777)),
+        ]
+
+        rng = np.random.default_rng(42)
+
+        for name, A in graphs:
+            L = self._laplacian(A)
+            evals, V = self._simple_spectrum_eigenpairs(L)
+
+            if V.size == 0:
+                continue
+
+            k = V.shape[1]
+            I_k = np.eye(k)
+
+            for trial in range(8):
+                signs = rng.choice([-1.0, 1.0], size=k)
+                V_flipped = V * signs[np.newaxis, :]
+                canon_V = spectral_canonicalize(V_flipped, evals)
+
+                gram = canon_V.T @ canon_V
+                np.testing.assert_allclose(
+                    gram,
+                    I_k,
+                    atol=1e-10,
+                    err_msg=f"{name} trial {trial}: Gram matrix not identity",
+                )
+
+    # ------------------------------------------------------------------
+    # Test 3: Spectral distance preservation
+    # ------------------------------------------------------------------
+
+    def test_spectral_distance_preservation(self):
+        """For two differently-signed representations of the same eigenvectors,
+        the sorted absolute-value row-signature matrix is identical.
+
+        This models two point clouds sharing the same graph Laplacian spectrum:
+        their canonical eigenvectors must be comparable via a sign-invariant metric."""
+        graphs = [
+            ("P5", self._path_graph(5)),
+            ("P7", self._path_graph(7)),
+            ("random_6", self._random_graph(6, seed=99)),
+        ]
+
+        rng = np.random.default_rng(123)
+
+        for name, A in graphs:
+            L = self._laplacian(A)
+            evals, V = self._simple_spectrum_eigenpairs(L)
+
+            if V.size == 0:
+                continue
+
+            k = V.shape[1]
+
+            signs_a = rng.choice([-1.0, 1.0], size=k)
+            signs_b = rng.choice([-1.0, 1.0], size=k)
+            V_a = V * signs_a[np.newaxis, :]
+            V_b = V * signs_b[np.newaxis, :]
+
+            canon_a = spectral_canonicalize(V_a, evals)
+            canon_b = spectral_canonicalize(V_b, evals)
+
+            def _abs_signature_matrix(C):
+                """Lexicographically sorted matrix of sorted absolute-value row vectors."""
+                rows = [tuple(np.sort(np.abs(C[i]))) for i in range(C.shape[0])]
+                rows.sort()
+                return np.array(rows)
+
+            sig_a = _abs_signature_matrix(canon_a)
+            sig_b = _abs_signature_matrix(canon_b)
+
+            np.testing.assert_allclose(
+                sig_a,
+                sig_b,
+                atol=1e-8,
+                err_msg=f"{name}: spectral distance not preserved across sign conventions",
+            )
+
+    # ------------------------------------------------------------------
+    # Test 4: Column-sign equivalence class on P5
+    # ------------------------------------------------------------------
+
+    def test_p5_all_sign_combos_one_equivalence_class(self):
+        """Enumerate all 2^4 = 16 sign vectors on P5's 4 non-trivial eigenvectors.
+
+        After canonicalization, every result must lie in exactly 1 column-sign
+        equivalence class.  Two matrices are equivalent iff they differ only by
+        column sign flips: V2 = V1 @ diag(d) for d in {+/-1}^4."""
+        A = self._path_graph(5)
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        k = V.shape[1]
+        assert k == 4, f"P5 should have 4 non-trivial eigenvectors, got {k}"
+
+        # Collect all 2^4 = 16 canonicalized matrices
+        canon_results = []
+        for bits in range(1 << k):
+            signs = np.array([(-1.0) ** ((bits >> j) & 1) for j in range(k)])
+            V_signed = V * signs[np.newaxis, :]
+            canon_results.append(spectral_canonicalize(V_signed, evals))
+
+        # Greedy grouping into column-sign equivalence classes
+        class_representatives = []
+        for canon_V in canon_results:
+            found = False
+            for rep in class_representatives:
+                if self._are_col_sign_equivalent(rep, canon_V):
+                    found = True
+                    break
+            if not found:
+                class_representatives.append(canon_V)
+
+        n_classes = len(class_representatives)
+        assert n_classes == 1, (
+            f"Expected exactly 1 column-sign equivalence class across all 2^4=16 "
+            f"sign vectors on P5, got {n_classes} classes"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 5: Automorphism orbit test on P5
+    # ------------------------------------------------------------------
+
+    def test_p5_automorphism_orbit_and_sign_matrix(self):
+        """For P5, the reflection sigma: i -> 4-i is a graph automorphism.
+
+        Since P_sigma L P_sigma^T = L, the matrix P_sigma V is also a valid
+        eigenvector matrix.  The test verifies:
+          (a) canon(P_sigma V) is column-sign equivalent to P_sigma canon(V).
+          (b) Explicitly recovers the sign matrix D in {+/-1}^k such that
+              canon(P_sigma V) == P_sigma canon(V) @ diag(D)
+              and checks D has only +/-1 entries and the equation holds."""
+        A = self._path_graph(5)
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        k = V.shape[1]
+
+        # Reflection automorphism of P5: node i <-> node 4-i
+        sigma = [4, 3, 2, 1, 0]
+
+        canon_V = spectral_canonicalize(V, evals)
+        canon_PV = spectral_canonicalize(V[sigma, :], evals)
+
+        # Expected: permute the canonical form by sigma
+        P_sigma_canon = canon_V[sigma, :]
+
+        # (a) Column-sign equivalence
+        assert self._are_col_sign_equivalent(P_sigma_canon, canon_PV), (
+            "canon(P_sigma V) must be column-sign equivalent to P_sigma canon(V) on P5"
+        )
+
+        # (b) Explicitly recover D in {+/-1}^k
+        D = np.ones(k, dtype=float)
+        for j in range(k):
+            col_got = canon_PV[:, j]
+            col_exp = P_sigma_canon[:, j]
+            if np.allclose(col_got, col_exp, atol=1e-7):
+                D[j] = 1.0
+            elif np.allclose(col_got, -col_exp, atol=1e-7):
+                D[j] = -1.0
+            else:
+                raise AssertionError(
+                    f"Column {j}: canon(P_sigma V)[:,{j}] is neither +1 nor -1 times "
+                    f"(P_sigma canon(V))[:,{j}] — not in the column-sign equivalence class"
+                )
+
+        # D must be a {+/-1} sign vector
+        assert np.all(np.abs(D) == 1.0), f"Recovered D is not a +/-1 vector: {D}"
+
+        # Verify closed-form: canon(P_sigma V) == P_sigma canon(V) @ diag(D)
+        reconstructed = P_sigma_canon * D[np.newaxis, :]
+        np.testing.assert_allclose(
+            canon_PV,
+            reconstructed,
+            atol=1e-7,
+            err_msg=(
+                "canon(P_sigma V) != P_sigma canon(V) @ diag(D) for the recovered sign matrix D"
+            ),
+        )
