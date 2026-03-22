@@ -251,6 +251,148 @@ class TestPermutationInvariance:
 
 
 # ---------------------------------------------------------------------------
+# TestAutomorphismInvariance
+# ---------------------------------------------------------------------------
+
+
+class TestAutomorphismInvariance:
+    """Canonicalization is invariant up to automorphism, not strict equality.
+
+    For graphs with nontrivial automorphisms, applying an automorphism σ
+    permutes rows of V.  The canonical signs may differ, but the result
+    is related by a column-sign matrix:
+
+        canon(P_σ V) = P_σ · canon(V) · diag(d)   for some d ∈ {±1}^k
+
+    This is the correct behaviour: the eigendecomposition is unique only
+    up to column signs, and automorphisms act on that ambiguity.
+    """
+
+    @staticmethod
+    def _laplacian(A):
+        D = np.diag(A.sum(axis=1))
+        return D - A
+
+    def _build_path_p5(self):
+        """Return (Laplacian, non-trivial eigvals, non-trivial eigvecs) for P5."""
+        A = np.zeros((5, 5))
+        for i, j in [(0, 1), (1, 2), (2, 3), (3, 4)]:
+            A[i, j] = A[j, i] = 1
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        return eigvals[nontriv], eigvecs[:, nontriv]
+
+    def test_p5_automorphism_not_strictly_equivariant(self):
+        """On P5, canon(P_σ V) ≠ P_σ canon(V) in general.
+
+        The reflection σ = (04)(13) swaps nodes within balanced blocks
+        {0,4} and {1,3}, changing the within-block ordering and thus the
+        sign selected by the first-non-zero-entry rule.
+        """
+        evals, V = self._build_path_p5()
+        sigma = [4, 3, 2, 1, 0]
+
+        canon_V = spectral_canonicalize(V, evals)
+        canon_V_sigma = spectral_canonicalize(V[sigma, :], evals)
+
+        # Strict equivariance should FAIL for at least one column
+        canon_V_permuted = canon_V[sigma, :]
+        assert not np.allclose(
+            canon_V_sigma, canon_V_permuted
+        ), "Expected strict equivariance to fail under P5 automorphism"
+
+    def test_p5_automorphism_up_to_column_signs(self):
+        """On P5, canon(P_σ V) = P_σ canon(V) D for some sign matrix D.
+
+        Each column of the canonicalized result is either identical or
+        negated — this is the correct notion of invariance for the
+        eigendecomposition.
+        """
+        evals, V = self._build_path_p5()
+        sigma = [4, 3, 2, 1, 0]
+
+        canon_V = spectral_canonicalize(V, evals)
+        canon_V_sigma = spectral_canonicalize(V[sigma, :], evals)
+        canon_V_permuted = canon_V[sigma, :]
+
+        for j in range(V.shape[1]):
+            col_got = canon_V_sigma[:, j]
+            col_exp = canon_V_permuted[:, j]
+            same = np.allclose(col_got, col_exp)
+            flipped = np.allclose(col_got, -col_exp)
+            assert same or flipped, (
+                f"Column {j}: neither same nor negated.\n"
+                f"  got:      {np.round(col_got, 6)}\n"
+                f"  expected: {np.round(col_exp, 6)}"
+            )
+
+    def test_p5_automorphism_with_all_sign_combos(self):
+        """Combine sign flips with the automorphism: still up-to-column-signs.
+
+        For every sign vector s and the automorphism σ:
+            canon(P_σ V diag(s))  ~  P_σ canon(V)   (up to column signs)
+        """
+        evals, V = self._build_path_p5()
+        sigma = [4, 3, 2, 1, 0]
+        k = V.shape[1]
+
+        canon_V = spectral_canonicalize(V, evals)
+        canon_V_permuted = canon_V[sigma, :]
+
+        for bits in range(1 << k):
+            signs = np.array([(-1) ** ((bits >> j) & 1) for j in range(k)], dtype=float)
+            V_signed = V * signs[np.newaxis, :]
+            V_sigma_signed = V_signed[sigma, :]
+            canon_test = spectral_canonicalize(V_sigma_signed, evals)
+
+            for j in range(k):
+                col_got = canon_test[:, j]
+                col_exp = canon_V_permuted[:, j]
+                assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                    f"sign bits={bits:0{k}b}, col {j}: not ±1 related"
+                )
+
+    def test_cycle_c6_automorphism_up_to_column_signs(self):
+        """C6 (6-cycle) has rich automorphism group.  Test a rotation and a
+        reflection, both should give up-to-column-signs invariance on the
+        simple-spectrum columns."""
+        from src.spectral_core import detect_eigenvalue_multiplicities
+
+        A = np.zeros((6, 6))
+        for i in range(6):
+            A[i, (i + 1) % 6] = A[(i + 1) % 6, i] = 1
+        L = self._laplacian(A)
+        eigvals, eigvecs = np.linalg.eigh(L)
+        nontriv = eigvals > 1e-6
+        V = eigvecs[:, nontriv]
+        evals = eigvals[nontriv]
+
+        mult = detect_eigenvalue_multiplicities(evals)["multiplicity"]
+        simple_cols = [j for j in range(len(evals)) if mult[j] == 1]
+
+        if not simple_cols:
+            return  # nothing to test — all multiplicities > 1
+
+        canon_V = spectral_canonicalize(V, evals)
+
+        # Rotation by 1: σ(i) = (i+1) mod 6
+        rot = [(i + 1) % 6 for i in range(6)]
+        # Reflection: σ(i) = (6-i) mod 6
+        ref = [(6 - i) % 6 for i in range(6)]
+
+        for sigma_name, sigma in [("rotation", rot), ("reflection", ref)]:
+            canon_sigma = spectral_canonicalize(V[sigma, :], evals)
+            canon_permuted = canon_V[sigma, :]
+            for j in simple_cols:
+                col_got = canon_sigma[:, j]
+                col_exp = canon_permuted[:, j]
+                assert np.allclose(col_got, col_exp) or np.allclose(col_got, -col_exp), (
+                    f"C6 {sigma_name}, simple col {j}: not ±1 related"
+                )
+
+
+# ---------------------------------------------------------------------------
 # TestIdempotency
 # ---------------------------------------------------------------------------
 
