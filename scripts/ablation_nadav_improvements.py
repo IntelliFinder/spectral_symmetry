@@ -133,18 +133,34 @@ def load_results():
     return results
 
 
-def aggregate(results, model, canon, k, h, eigval_scale=False, epochs=50):
-    """Return (mean_ap, std_ap, n_seeds) for given params, or None."""
-    vals = []
+def aggregate(results, model, canon, k, h, eigval_scale=False, epochs=None):
+    """Return (mean_ap, std_ap, n_seeds) for given params, or None.
+
+    If epochs is None, uses the latest (highest) epoch value available
+    for this config. If specified, uses that exact epoch value.
+    """
+    if epochs is not None:
+        vals = []
+        for seed in SEEDS:
+            key = (model, canon, k, h, seed, eigval_scale, epochs)
+            if key in results:
+                ap = results[key].get(METRIC_KEY)
+                if ap is not None:
+                    vals.append(ap)
+        if vals:
+            return np.mean(vals), np.std(vals), len(vals)
+        return None
+
+    # Find the latest epoch value that has data for this config
+    available_epochs = set()
     for seed in SEEDS:
-        key = (model, canon, k, h, seed, eigval_scale, epochs)
-        if key in results:
-            ap = results[key].get(METRIC_KEY)
-            if ap is not None:
-                vals.append(ap)
-    if vals:
-        return np.mean(vals), np.std(vals), len(vals)
-    return None
+        for key in results:
+            if key[:5] == (model, canon, k, h, seed) and key[5] == eigval_scale:
+                available_epochs.add(key[6])
+    if not available_epochs:
+        return None
+    # Use the latest epoch
+    return aggregate(results, model, canon, k, h, eigval_scale, max(available_epochs))
 
 
 # ── Cache Pre-warming ────────────────────────────────────────────────────────
