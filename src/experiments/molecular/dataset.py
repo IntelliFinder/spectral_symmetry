@@ -135,18 +135,35 @@ def _compute_lappe_for_graph(edge_index_np, num_nodes, n_eigs, method, graph_idx
 class _SplitView:
     """Lightweight view into a MolecularLapPEDataset for a specific split."""
 
-    def __init__(self, parent, indices, split="train"):
+    def __init__(self, parent, indices, split="train", augment_override=None, base_seed=None):
         self.parent = parent
         self.indices = indices
         self.split = split
+        # augment_override: if set, override the split-based default. Used at
+        # test time for aug-averaged evaluation of random_augmented models.
+        self.augment_override = augment_override
+        # base_seed: if set, each __getitem__ call derives a seeded rng from
+        # base_seed and the graph_idx (reproducible augmentation draws).
+        self.base_seed = base_seed
 
     def __len__(self):
         return len(self.indices)
 
     def __getitem__(self, idx):
         graph_idx = self.indices[idx]
-        augment = self.split == "train"
-        return self.parent._get_by_graph_idx(graph_idx, augment=augment)
+        if self.augment_override is not None:
+            augment = self.augment_override
+        else:
+            augment = self.split == "train"
+        if self.base_seed is None:
+            rng = None
+        else:
+            # Mix base_seed with graph_idx so different graphs see different
+            # random draws while the combination (base_seed, graph_idx) is
+            # fully reproducible.
+            mixed = (int(self.base_seed) * 2_654_435_761 + int(graph_idx)) & 0xFFFFFFFF
+            rng = np.random.default_rng(mixed)
+        return self.parent._get_by_graph_idx(graph_idx, augment=augment, rng=rng)
 
 
 class MolecularLapPEDataset:
@@ -446,7 +463,49 @@ class MolecularLapPEDataset:
             **kwargs,
         )
 
-    def _get_by_graph_idx(self, graph_idx, augment=True):
+    def get_augmented_test_loader(
+        self, split, batch_size=32, base_seed=0, num_workers=0, **kwargs
+    ):
+        """Create a non-shuffling DataLoader that applies the random_augmented
+        ambiguity group to every sample (both signs and O(m) rotations),
+        seeded reproducibly by ``base_seed``.
+
+        Intended for test-time averaged evaluation of random_augmented models.
+        Always returns deterministic output for a given ``base_seed``.
+
+        Parameters
+        ----------
+        split : str
+            ``"train"``, ``"valid"``, or ``"test"``.
+        batch_size : int
+        base_seed : int
+            Seed that mixes with each graph_idx to produce a reproducible
+            augmentation draw.
+        num_workers : int
+        **kwargs
+            Forwarded to ``DataLoader``.
+
+        Returns
+        -------
+        DataLoader
+        """
+        split_indices = self.split_dict[split].numpy().tolist()
+        ds = _SplitView(
+            self,
+            split_indices,
+            split=split,
+            augment_override=True,
+            base_seed=base_seed,
+        )
+        return DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            **kwargs,
+        )
+
+    def _get_by_graph_idx(self, graph_idx, augment=True, rng=None):
         """Get a single graph by its OGB index.
 
         Parameters
@@ -454,7 +513,11 @@ class MolecularLapPEDataset:
         graph_idx : int
         augment : bool
             If True and method is ``random_augmented``, recompute PE with
-            fresh random signs. If False, return the cached (pre-computed) PE.
+            fresh random signs + Haar O(m) rotation per multiplicity block.
+            If False, return the cached (pre-computed) PE.
+        rng : numpy.random.Generator or None
+            Reproducible random generator for the augmentation draw. ``None``
+            falls back to ``np.random`` for the legacy training loop.
         """
         data = self.ogb_dataset[graph_idx]
         pe, evals = self._pe_data[graph_idx]
@@ -464,10 +527,13 @@ class MolecularLapPEDataset:
         pe = pe[:, :k]
         evals = evals[:k]
 
-        # For random_augmented, apply random sign flips during training only
+        # For random_augmented, apply a random element of the eigenvector
+        # ambiguity group: sign flips on simple eigenvalues + Haar O(m)
+        # rotations on multiplicity-m blocks.
         if self.canonicalization == "random_augmented" and augment:
-            signs = np.where(np.random.random(k) < 0.5, -1.0, 1.0).astype(np.float32)
-            pe = pe * signs  # broadcast (num_nodes, k) * (k,)
+            from ...spectral_canonicalization import random_augment_eigenvectors
+
+            pe = random_augment_eigenvectors(pe, eigenvalues=evals, rng=rng).astype(np.float32)
 
         # Scale eigenvectors by 1/sqrt(eigenvalue) if requested
         if self.eigval_scale:

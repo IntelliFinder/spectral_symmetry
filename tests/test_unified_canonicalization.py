@@ -9,6 +9,7 @@ from src.spectral_canonicalization import (
     canonicalize_maxabs,
     canonicalize_random_augmented,
     canonicalize_random_fixed,
+    random_augment_eigenvectors,
 )
 
 # ---------------------------------------------------------------------------
@@ -115,6 +116,89 @@ class TestCanonicalizeRandomAugmented:
         """Output columns differ from input by at most a sign flip."""
         V = np.random.default_rng(20).standard_normal((5, 3))
         result = canonicalize_random_augmented(V)
+        for j in range(V.shape[1]):
+            assert np.allclose(result[:, j], V[:, j]) or np.allclose(result[:, j], -V[:, j])
+
+
+# ---------------------------------------------------------------------------
+# TestRandomAugmentEigenvectors (sign + O(m) ambiguity group)
+# ---------------------------------------------------------------------------
+
+
+class TestRandomAugmentEigenvectors:
+    """Tests for ``random_augment_eigenvectors``."""
+
+    def test_sign_only_when_no_multiplicities(self):
+        """Distinct eigenvalues ⇒ each column differs from input by at most a sign."""
+        V = np.random.default_rng(30).standard_normal((8, 3))
+        lam = np.array([1.0, 2.0, 3.0])
+        rng = np.random.default_rng(42)
+        result = random_augment_eigenvectors(V, eigenvalues=lam, rng=rng)
+        for j in range(V.shape[1]):
+            assert np.allclose(result[:, j], V[:, j]) or np.allclose(result[:, j], -V[:, j])
+
+    def test_preserves_subspace_for_multiplicity_block(self):
+        """Mult-2 block ⇒ output spans the same subspace as input (projection equal)."""
+        rng_v = np.random.default_rng(31)
+        # Build two orthonormal columns for the mult-2 block + one simple column.
+        Q, _ = np.linalg.qr(rng_v.standard_normal((10, 3)))
+        V = Q[:, :3]
+        lam = np.array([1.0, 1.0, 2.0])  # first two are a mult-2 block
+        rng = np.random.default_rng(43)
+        result = random_augment_eigenvectors(V, eigenvalues=lam, rng=rng)
+
+        # The projection onto the mult-2 subspace must be preserved.
+        P_in = V[:, :2] @ V[:, :2].T
+        P_out = result[:, :2] @ result[:, :2].T
+        np.testing.assert_allclose(P_in, P_out, atol=1e-10)
+
+        # The simple column must differ by at most a sign.
+        assert np.allclose(result[:, 2], V[:, 2]) or np.allclose(result[:, 2], -V[:, 2])
+
+        # And with high probability the block columns are NOT just signs of input.
+        col_signs_match = all(
+            np.allclose(result[:, j], V[:, j]) or np.allclose(result[:, j], -V[:, j])
+            for j in range(2)
+        )
+        # Block rotation should mix — very unlikely to be a pure sign flip at this seed.
+        assert not col_signs_match
+
+    def test_rng_is_reproducible(self):
+        """Same seed ⇒ same output; different seed ⇒ different output."""
+        rng_v = np.random.default_rng(32)
+        Q, _ = np.linalg.qr(rng_v.standard_normal((10, 3)))
+        V = Q[:, :3]
+        lam = np.array([1.0, 1.0, 2.0])
+
+        r_a = random_augment_eigenvectors(V, eigenvalues=lam, rng=np.random.default_rng(100))
+        r_b = random_augment_eigenvectors(V, eigenvalues=lam, rng=np.random.default_rng(100))
+        r_c = random_augment_eigenvectors(V, eigenvalues=lam, rng=np.random.default_rng(101))
+
+        np.testing.assert_array_equal(r_a, r_b)
+        assert not np.allclose(r_a, r_c)
+
+    def test_haar_correction_orthogonal(self):
+        """Block transform must be orthogonal (Haar-corrected QR)."""
+        rng_v = np.random.default_rng(33)
+        Q, _ = np.linalg.qr(rng_v.standard_normal((10, 4)))
+        V = Q[:, :4]
+        lam = np.array([1.0, 1.0, 1.0, 2.0])  # mult-3 + simple
+        rng = np.random.default_rng(44)
+        result = random_augment_eigenvectors(V, eigenvalues=lam, rng=rng)
+
+        # Projection onto 3-dim subspace is invariant.
+        P_in = V[:, :3] @ V[:, :3].T
+        P_out = result[:, :3] @ result[:, :3].T
+        np.testing.assert_allclose(P_in, P_out, atol=1e-10)
+
+        # Columns remain orthonormal.
+        G = result[:, :3].T @ result[:, :3]
+        np.testing.assert_allclose(G, np.eye(3), atol=1e-10)
+
+    def test_backward_compat_sign_only_with_no_eigenvalues(self):
+        """eigenvalues=None falls back to sign-only flips."""
+        V = np.random.default_rng(34).standard_normal((5, 4))
+        result = random_augment_eigenvectors(V, eigenvalues=None, rng=np.random.default_rng(7))
         for j in range(V.shape[1]):
             assert np.allclose(result[:, j], V[:, j]) or np.allclose(result[:, j], -V[:, j])
 

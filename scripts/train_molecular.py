@@ -130,6 +130,82 @@ def evaluate(model, loader, evaluator, device, dataset_name, pe_type="eigvec"):
     return metric, y_true, y_pred, graph_indices
 
 
+@torch.no_grad()
+def evaluate_with_aug_averaging(
+    model,
+    mol_dataset,
+    evaluator,
+    device,
+    dataset_name,
+    pe_type="eigvec",
+    num_samples=8,
+    base_seed=0,
+    batch_size=32,
+    num_workers=0,
+):
+    """Evaluate by averaging K forward passes over random draws of the
+    eigenvector ambiguity group (sign flips × O(m) rotations).
+
+    For each sample ``s`` in ``[0, num_samples)`` we rebuild a test loader
+    from ``mol_dataset.get_augmented_test_loader`` with
+    ``base_seed=base_seed * 1_000_003 + s``. Each graph's predictions are
+    accumulated as sigmoid probabilities, averaged across the K samples,
+    then fed to the OGB evaluator.
+
+    Returns (metric, y_true, y_pred_avg, graph_indices).
+    """
+    model.eval()
+
+    accum_probs = None  # shape (N, num_tasks)
+    y_true_final = None
+    graph_indices_final = None
+
+    for s in range(num_samples):
+        seed = base_seed * 1_000_003 + s
+        loader = mol_dataset.get_augmented_test_loader(
+            "test", batch_size=batch_size, base_seed=seed, num_workers=num_workers
+        )
+        y_true_list = []
+        probs_list = []
+        gidx_list = []
+        for batch in loader:
+            batch = batch.to(device)
+            logits = model(batch.x, transform_pe(batch, pe_type), batch.edge_index, batch.batch)
+            probs = torch.sigmoid(logits)
+            y_true_list.append(batch.y.cpu().numpy())
+            probs_list.append(probs.cpu().numpy())
+            if hasattr(batch, "graph_idx"):
+                gidx_list.append(batch.graph_idx.cpu().numpy().reshape(-1))
+
+        y_true_s = np.concatenate(y_true_list, axis=0)
+        probs_s = np.concatenate(probs_list, axis=0)
+        gidx_s = (
+            np.concatenate(gidx_list, axis=0)
+            if gidx_list
+            else np.arange(len(y_true_s))
+        )
+
+        if accum_probs is None:
+            accum_probs = probs_s.astype(np.float64)
+            y_true_final = y_true_s
+            graph_indices_final = gidx_s
+        else:
+            # Loader has shuffle=False so ordering is identical across samples.
+            accum_probs = accum_probs + probs_s.astype(np.float64)
+
+    y_pred_avg = (accum_probs / num_samples).astype(np.float32)
+
+    eval_result = evaluator.eval({"y_true": y_true_final, "y_pred": y_pred_avg})
+    if "ogbg-moltox21" in dataset_name:
+        metric = eval_result["rocauc"]
+    elif "ogbg-molpcba" in dataset_name:
+        metric = eval_result["ap"]
+    else:
+        metric = list(eval_result.values())[0]
+
+    return metric, y_true_final, y_pred_avg, graph_indices_final
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Train GIN + LapPE on OGB molecular property prediction"
@@ -194,6 +270,18 @@ def main():
         type=int,
         default=20,
         help="Early stopping patience: stop if val metric hasn't improved for this many epochs",
+    )
+    parser.add_argument(
+        "--test-aug-samples",
+        type=int,
+        default=0,
+        help=(
+            "If >0 AND canonicalization='random_augmented', after the standard "
+            "test eval run an additional test eval averaged over this many random "
+            "draws from the eigenvector ambiguity group (sign flips + Haar O(m) "
+            "rotations). Saved as best_test_<metric>_aug<K>. No-op for other "
+            "canonicalizations."
+        ),
     )
 
     # Output
@@ -400,6 +488,35 @@ def main():
         f"best_test_{metric_name}": final_test,
         "device": str(device),
     }
+
+    # Test-time ambiguity-group averaging — only for random_augmented models.
+    if (
+        args.canonicalization == "random_augmented"
+        and args.test_aug_samples is not None
+        and args.test_aug_samples > 0
+    ):
+        aug_metric, _, y_pred_avg, graph_indices_aug = evaluate_with_aug_averaging(
+            model,
+            mol_dataset,
+            evaluator,
+            device,
+            dataset_name=args.dataset,
+            pe_type=args.pe_type,
+            num_samples=args.test_aug_samples,
+            base_seed=args.seed,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+        )
+        key = f"best_test_{metric_name}_aug{args.test_aug_samples}"
+        results[key] = aug_metric
+        results["test_aug_samples"] = args.test_aug_samples
+        print(f"Final test {metric_name} (aug-avg K={args.test_aug_samples}): {aug_metric:.4f}")
+        if args.save_predictions:
+            np.savez(
+                save_dir / f"test_predictions_aug{args.test_aug_samples}.npz",
+                y_pred_avg=y_pred_avg,
+                graph_indices=graph_indices_aug,
+            )
     with open(save_dir / "results.json", "w") as f:
         json.dump(results, f, indent=2)
 

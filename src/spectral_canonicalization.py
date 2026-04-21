@@ -1055,8 +1055,76 @@ def canonicalize_random_fixed(eigenvectors, sample_idx):
     return result
 
 
+def random_augment_eigenvectors(eigenvectors, eigenvalues=None, rng=None):
+    """Sample a random element of the Laplacian eigenvector ambiguity group.
+
+    The ambiguity group is a direct product:
+      - ``{-1, +1}`` (sign flip) per simple eigenvalue,
+      - orthogonal group ``O(m)`` per multiplicity-``m`` eigenvalue block.
+
+    ``eigenvalues=None`` or unknown multiplicities falls back to sign flips
+    only (backward-compatible with the pre-existing augmentation).
+
+    Parameters
+    ----------
+    eigenvectors : ndarray of shape (N, k)
+    eigenvalues : ndarray of shape (k,) or None
+    rng : numpy.random.Generator or None
+        Seeded generator for reproducibility. If None, uses ``np.random`` for
+        compatibility with the legacy training-time augmentation.
+
+    Returns
+    -------
+    ndarray of shape (N, k)
+    """
+    result = np.asarray(eigenvectors, dtype=float).copy()
+    k = result.shape[1]
+
+    def _rand_below_half(j):
+        if rng is None:
+            return np.random.random() < 0.5
+        return rng.random() < 0.5
+
+    if eigenvalues is None:
+        # Sign-flip only path (legacy).
+        for j in range(k):
+            if _rand_below_half(j):
+                result[:, j] = -result[:, j]
+        return result
+
+    from .spectral_core import detect_eigenvalue_multiplicities
+
+    info = detect_eigenvalue_multiplicities(np.asarray(eigenvalues, dtype=float))
+    group_indices = info["group_indices"]
+    multiplicity = info["multiplicity"]
+
+    # Walk columns in order; columns sharing a group_index form a block.
+    j = 0
+    while j < k:
+        m = multiplicity[j]
+        if m == 1:
+            if _rand_below_half(j):
+                result[:, j] = -result[:, j]
+            j += 1
+        else:
+            block_cols = list(range(j, j + m))
+            if rng is None:
+                A = np.random.standard_normal((m, m))
+            else:
+                A = rng.standard_normal((m, m))
+            Q, R = np.linalg.qr(A)
+            # Haar correction: flip columns of Q according to sign(diag(R)).
+            Q = Q * np.sign(np.diag(R))[np.newaxis, :]
+            result[:, block_cols] = result[:, block_cols] @ Q
+            j += m
+    return result
+
+
 def canonicalize_random_augmented(eigenvectors):
     """Non-deterministic random sign flips (data augmentation).
+
+    Thin wrapper around :func:`random_augment_eigenvectors` with
+    ``eigenvalues=None`` — sign flips only, legacy behaviour.
 
     Parameters
     ----------
@@ -1066,11 +1134,7 @@ def canonicalize_random_augmented(eigenvectors):
     -------
     ndarray of shape (N, k)
     """
-    result = np.asarray(eigenvectors, dtype=float).copy()
-    for j in range(result.shape[1]):
-        if np.random.random() < 0.5:
-            result[:, j] = -result[:, j]
-    return result
+    return random_augment_eigenvectors(eigenvectors, eigenvalues=None, rng=None)
 
 
 def canonicalize_abs(eigenvectors):

@@ -225,6 +225,7 @@ def build_commands(
     epochs=50,
     patience=10,
     dir_suffix="",
+    test_aug_samples=0,
 ):
     """Build list of (name, cmd) tuples for all combos, skipping existing."""
     commands = []
@@ -268,6 +269,8 @@ def build_commands(
         ]
         if evs:
             cmd.append("--eigval-scale")
+        if test_aug_samples and test_aug_samples > 0:
+            cmd.extend(["--test-aug-samples", str(test_aug_samples)])
         scale_tag = "_evscale" if evs else ""
         name = f"{model}/{canon}_k{k}_h{h}_s{seed}{scale_tag}{dir_suffix}"
         commands.append((name, cmd))
@@ -772,12 +775,47 @@ def main():
         default="",
         help="Suffix to append to save dirs (e.g. '_ep100' to avoid collisions)",
     )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Seeds to run (default: all SEEDS constant).",
+    )
+    parser.add_argument(
+        "--base-dir",
+        type=str,
+        default=None,
+        help=(
+            "Override BASE_DIR — where results are saved and loaded from "
+            "(default: results/nadav_improvements)."
+        ),
+    )
+    parser.add_argument(
+        "--test-aug-samples",
+        type=int,
+        default=0,
+        help=(
+            "Pass --test-aug-samples K to train_molecular.py. Only affects "
+            "random_augmented runs — adds a K-sample test-time ambiguity-group "
+            "averaged metric. Default 0 (disabled)."
+        ),
+    )
     args = parser.parse_args()
+
+    # --base-dir override must be applied before any save_dir_for()/load_results().
+    if args.base_dir is not None:
+        global BASE_DIR, PLOT_DIR
+        BASE_DIR = args.base_dir
+        PLOT_DIR = os.path.join(BASE_DIR, "plots")
+        os.makedirs(BASE_DIR, exist_ok=True)
+        os.makedirs(PLOT_DIR, exist_ok=True)
 
     models = args.model or MODELS
     canons = args.canonicalization or CANONICALIZATIONS
     k_values = args.k or K_VALUES
     hdims = args.hidden_dim or HIDDEN_DIMS
+    seeds = args.seeds or SEEDS
     evs_opts = [False] if args.no_eigval_scale else EIGVAL_SCALE_OPTIONS
 
     if args.analysis_only:
@@ -796,11 +834,12 @@ def main():
         canons,
         k_values,
         hdims,
-        SEEDS,
+        seeds,
         evs_opts,
         epochs=args.epochs,
         patience=args.patience,
         dir_suffix=args.dir_suffix,
+        test_aug_samples=args.test_aug_samples,
     )
     total = len(commands) + skipped
     print(f"\nTotal configurations: {total} ({skipped} already done, {len(commands)} to run)")
