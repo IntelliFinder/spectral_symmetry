@@ -1,0 +1,23 @@
+{
+  "dataset": "ogbg-molpcba",
+  "model": "gin",
+  "canonicalization": "map",
+  "n_eigs": 8,
+  "pe_type": "eigvec",
+  "eigval_scale": false,
+  "hidden_dim": 512,
+  "num_layers": 5,
+  "dropout": 0.5,
+  "jumping_knowledge": false,
+  "epochs": 200,
+  "batch_size": 32,
+  "lr": 0.001,
+  "seed": 2,
+  "n_params": 2975872,
+  "best_epoch": 117,
+  "stopped_epoch": 132,
+  "patience": 15,
+  "best_val_ap": 0.2599326754746999,
+  "best_test_ap": 0.23993947130738574,
+  "device": "cuda"
+}
