@@ -801,6 +801,15 @@ def main():
             "averaged metric. Default 0 (disabled)."
         ),
     )
+    parser.add_argument(
+        "--cache-n-eigs",
+        type=int,
+        default=None,
+        help=(
+            "Override CACHE_K — number of eigenvectors to compute and cache. "
+            "Must be >= max(--k). Default uses module constant (15)."
+        ),
+    )
     args = parser.parse_args()
 
     # --base-dir override must be applied before any save_dir_for()/load_results().
@@ -810,6 +819,11 @@ def main():
         PLOT_DIR = os.path.join(BASE_DIR, "plots")
         os.makedirs(BASE_DIR, exist_ok=True)
         os.makedirs(PLOT_DIR, exist_ok=True)
+
+    # --cache-n-eigs override (must precede prewarm and command building).
+    if args.cache_n_eigs is not None:
+        global CACHE_K
+        CACHE_K = args.cache_n_eigs
 
     models = args.model or MODELS
     canons = args.canonicalization or CANONICALIZATIONS
