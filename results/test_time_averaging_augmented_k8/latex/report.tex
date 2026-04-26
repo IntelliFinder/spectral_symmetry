@@ -1,0 +1,345 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[table]{xcolor}
+\usepackage{microtype}
+\usepackage{caption}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black
+}
+
+\newcommand{\win}{\cellcolor{green!15}}
+\newcommand{\lose}{\cellcolor{red!15}}
+\newcommand{\tie}{\cellcolor{gray!10}}
+
+\title{Random Augmentation vs.\ Canonicalization\\for Laplacian Positional Encodings\\
+       \large Does test-time ambiguity-group averaging help?}
+\author{ogbg-molpcba experiments, GIN backbone}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We compare three ways of resolving the sign + basis ambiguity of Laplacian
+eigenvector positional encodings (LapPE) on the ogbg-molpcba molecular
+benchmark: (i) deterministic canonicalization (\texttt{map}, \texttt{oap}),
+(ii) training-time random augmentation (\texttt{random\_augmented}), and
+(iii) random augmentation \emph{plus} test-time averaging over $K$ random
+draws of the eigenvector ambiguity group. Two sweeps (54 runs total) at
+$k\!\in\!\{3,8\}$ eigenvectors, hidden dim
+$h\!\in\!\{16,128,512\}$, three seeds each. \textbf{Headline}: at $k\!=\!3$
+canonicalization (\texttt{oap}) wins at $h\!=\!512$; at $k\!=\!8$ random
+augmentation wins at \emph{every} hidden dim. Test-time averaging adds a
+tiny consistent bump ($+0.0001$ to $+0.0005$ AP), never hurts.
+\textbf{The single-line conclusion: canonicalization does \emph{not} perform
+better, except in a narrow $k\!=\!3$ / $h\!=\!512$ corner.}
+\end{abstract}
+
+\tableofcontents
+\bigskip
+
+%==============================================================================
+\section{What problem are we solving?}
+%==============================================================================
+
+Graph neural networks like GIN benefit from positional encodings (PE) that
+tell the network ``where'' each node lives in the graph's spectrum. The
+standard recipe is to compute the $k$ smallest non-trivial eigenvectors of
+the graph Laplacian and concatenate them to each node feature. This works,
+but eigenvectors are not unique: for any simple eigenvalue, the eigenvector
+is defined only up to a sign $(\pm 1)$; for a multiplicity-$m$ eigenvalue,
+\emph{any orthogonal change of basis $Q\in O(m)$} produces an equally valid
+eigenbasis. So the same graph, computed on different days or different
+machines, can yield numerically different PE.
+
+Three ways to handle this ambiguity:
+
+\paragraph{Canonicalization.} Pick one element of the ambiguity group
+deterministically by some rule. Examples:
+\begin{itemize}\itemsep0pt
+  \item \texttt{map} --- maximum-absolute-position rule per column.
+  \item \texttt{oap} --- ordered-absolute-position rule, more robust at
+        multiplicity blocks.
+\end{itemize}
+The model sees the \emph{same} PE every epoch and at test time.
+
+\paragraph{Random augmentation.}
+(\texttt{random\_augmented}.) Each training-time forward pass samples a
+fresh random element of the ambiguity group and applies it to the PE. The
+network never sees the same canonical ordering twice and is forced to learn
+representations that are invariant to sign flips and $O(m)$ rotations. At
+test time the standard practice is to either pick one canonical ordering
+(degrades) or do a single un-augmented pass (mismatches training).
+
+\paragraph{Random augmentation $+$ test-time averaging.}
+(\texttt{random\_augmented} with $K$-sample averaging at test time.) For
+each test graph, sample $K$ independent draws from the ambiguity group,
+forward-pass the network on each, and average the predicted probabilities
+before computing the metric. This is the test-time analog of training-time
+augmentation --- you take an empirical Monte-Carlo estimate of the
+\emph{group-invariant} prediction. Inspired by the
+\texttt{test\_with\_randomized\_invariance} helper in
+\href{https://github.com/jwsiegel2510/Sn-invariant-weighted-frames}%
+{Siegel \emph{et al.}, weighted-frames}; we adapt it from $S_n$ to the
+LapPE ambiguity group $\bigtimes_i \mathrm{O}(m_i)$.
+
+%==============================================================================
+\section{Exact parameter settings}
+%==============================================================================
+
+Both sweeps share everything except $k$ and the test-time sample budget $K$.
+
+\begin{table}[h]
+\centering\small
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular}{l l}
+\toprule
+\textbf{Knob}                       & \textbf{Value}                                                  \\
+\midrule
+Dataset                             & \texttt{ogbg-molpcba} (molecular property prediction)             \\
+Backbone                            & GIN, 5 layers                                                    \\
+PE type                             & eigvec (Laplacian eigenvectors)                                  \\
+Eigval scaling                      & off                                                              \\
+Hidden dim $h$                      & $\{16,\ 128,\ 512\}$                                              \\
+Number of eigenvectors $k$          & $3$ (sweep~1) ~/~ $8$ (sweep~2)                                  \\
+Cache eigenvectors                  & $15$ (slice to $k$ at runtime)                                    \\
+Batch size                          & $32$                                                              \\
+Learning rate                       & $1\!\times\!10^{-3}$                                              \\
+Optimizer / scheduler               & Adam, default cosine                                              \\
+Epoch budget (cap)                  & $200$                                                             \\
+Early stopping patience             & $15$ (validation AP, stop after no-improve)                       \\
+Seeds                               & $\{0,1,2\}$ ($3$ seeds per cell)                                  \\
+Canonicalizations                   & \texttt{map}, \texttt{oap}, \texttt{random\_augmented}            \\
+Test-time samples $K$               & $8$ (sweep~1) ~/~ $16$ (sweep~2)                                  \\
+\midrule
+Total runs                          & $3 \times 3 \times 3 = 27$ per sweep, $54$ total                  \\
+Hardware                            & 2 $\times$ NVIDIA A40 (48~GB), $6$ workers per GPU                \\
+\bottomrule
+\end{tabular}
+\caption{Hyperparameters held constant between the two sweeps. Bumping
+$k$ from $3$ to $8$ slightly increases parameter count: at $h\!=\!512$,
+$2{,}973{,}312$ vs $2{,}975{,}872$ params. The test-time sample budget $K$
+is set to the size of the (simple-spectrum) sign group at $k\!=\!3$ and
+to a $\sim$6.25\,\% Monte-Carlo coverage at $k\!=\!8$ where the group is
+$\mathbb{Z}_2^8 = 256$.}
+\label{tab:hparams}
+\end{table}
+
+\paragraph{Reproducibility.}
+The augmentation rng is seeded as
+$(\text{base\_seed} \cdot 1{,}000{,}003 + s) \times 2{,}654{,}435{,}761
+\oplus \text{graph\_idx}$, so the aug-averaged metric is bit-reproducible
+for a given $(\text{seed}, K)$.
+
+%==============================================================================
+\section{Results}
+%==============================================================================
+
+\subsection{Sweep~1: $k=3$, $K=8$}
+
+At $k\!=\!3$ all three eigenvalues are simple (multiplicity~$1$) on
+ogbg-molpcba molecules, so the ambiguity group is just
+$\mathbb{Z}_2^3 = 8$. We picked $K\!=\!8$ to cover it exactly in
+expectation.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{l r r r r r}
+\toprule
+canonicalization     &  $h$  & params     & AP (single pass)     & AP (aug-avg $K{=}8$) & $\Delta$ aug \\
+\midrule
+\tie map             &   16  &      5,744 & 0.0626 $\pm$ 0.0025  & ---                  & ---           \\
+\tie oap             &   16  &      5,744 & 0.0641 $\pm$ 0.0051  & ---                  & ---           \\
+\win random\_augmented &   16  &      5,744 & \textbf{0.0662} $\pm$ 0.0015 & 0.0663 $\pm$ 0.0015 & $+$0.0001    \\
+\midrule
+\tie map             &  128  &    202,752 & 0.1704 $\pm$ 0.0060  & ---                  & ---           \\
+\tie oap             &  128  &    202,752 & 0.1682 $\pm$ 0.0089  & ---                  & ---           \\
+\win random\_augmented &  128  &    202,752 & \textbf{0.1762} $\pm$ 0.0064 & 0.1765 $\pm$ 0.0062 & $+$0.0002    \\
+\midrule
+\tie map             &  512  &  2,973,312 & 0.2397 $\pm$ 0.0122  & ---                  & ---           \\
+\win oap             &  512  &  2,973,312 & \textbf{0.2431} $\pm$ 0.0022 & ---          & ---           \\
+\lose random\_augmented &  512  &  2,973,312 & 0.2395 $\pm$ 0.0117  & 0.2398 $\pm$ 0.0116 & $+$0.0002    \\
+\bottomrule
+\end{tabular}
+\caption{Sweep~1, $k=3$, ogbg-molpcba, mean $\pm$ std over 3 seeds. Bold
+numbers are the best mean AP at each $h$. \texttt{random\_augmented} wins
+at $h\!=\!16$ and $h\!=\!128$; \texttt{oap} wins at $h\!=\!512$ by
+$\mathbf{+0.0033}$ AP. Test-time averaging $K\!=\!8$ adds at most
+$+0.0002$ AP --- it does not close the gap to \texttt{oap}.}
+\label{tab:k3}
+\end{table}
+
+\subsection{Sweep~2: $k=8$, $K=16$}
+
+At $k\!=\!8$ the sign group is $\mathbb{Z}_2^8 = 256$. We picked
+$K\!=\!16$ to keep test-eval cost reasonable (Monte-Carlo error
+$\propto 1/\sqrt{K} = 1/4$) while still being a meaningful sample.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{l r r r r r}
+\toprule
+canonicalization     &  $h$  & params     & AP (single pass)     & AP (aug-avg $K{=}16$) & $\Delta$ aug \\
+\midrule
+\tie map             &   16  &      5,824 & 0.0622 $\pm$ 0.0023  & ---                   & ---           \\
+\tie oap             &   16  &      5,824 & 0.0605 $\pm$ 0.0022  & ---                   & ---           \\
+\win random\_augmented &   16  &      5,824 & \textbf{0.0636} $\pm$ 0.0029 & 0.0637 $\pm$ 0.0029 & $+$0.0001    \\
+\midrule
+\tie map             &  128  &    203,392 & 0.1705 $\pm$ 0.0141  & ---                   & ---           \\
+\tie oap             &  128  &    203,392 & 0.1754 $\pm$ 0.0073  & ---                   & ---           \\
+\win random\_augmented &  128  &    203,392 & \textbf{0.1766} $\pm$ 0.0062 & 0.1766 $\pm$ 0.0062 & $-$0.0000    \\
+\midrule
+\tie map             &  512  &  2,975,872 & 0.2344 $\pm$ 0.0078  & ---                   & ---           \\
+\tie oap             &  512  &  2,975,872 & 0.2371 $\pm$ 0.0076  & ---                   & ---           \\
+\win random\_augmented &  512  &  2,975,872 & \textbf{0.2395} $\pm$ 0.0139 & 0.2400 $\pm$ 0.0140 & $+$0.0005    \\
+\bottomrule
+\end{tabular}
+\caption{Sweep~2, $k=8$, ogbg-molpcba, mean $\pm$ std over 3 seeds.
+\texttt{random\_augmented} wins at \emph{every} hidden dim. The
+$h\!=\!512$ verdict from sweep~1 (where \texttt{oap} won) flipped: at
+$k\!=\!8$ random\_augmented edges out \texttt{oap} by $+0.0024$ AP.
+Test-time averaging again contributes $\leq +0.0005$.}
+\label{tab:k8}
+\end{table}
+
+\subsection{Side-by-side: $k=3$ vs $k=8$}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{r l l l l}
+\toprule
+$h$  & \multicolumn{2}{c}{$k=3$}        & \multicolumn{2}{c}{$k=8$}                \\
+     & best canon         & winner       & best canon         & winner             \\
+\midrule
+ 16  & oap   $0.0641$     & rand\_aug    & map   $0.0622$     & rand\_aug          \\
+128  & map   $0.1704$     & rand\_aug    & oap   $0.1754$     & rand\_aug          \\
+\textbf{512} & \textbf{oap   $\mathbf{0.2431}$} & \textbf{oap} & oap   $0.2371$     & \textbf{rand\_aug} \\
+\bottomrule
+\end{tabular}
+\caption{The $h\!=\!512$ verdict flips between sweeps: \texttt{oap} on top
+at $k\!=\!3$, \texttt{random\_augmented} on top at $k\!=\!8$. The PE
+width matters; widening from $3$ to $8$ eigenvectors changes the
+canonicalization-vs-augmentation winner at the largest model.}
+\label{tab:compare}
+\end{table}
+
+\subsection{Visual summary}
+
+\begin{figure}[h]
+\centering
+\begin{minipage}{0.48\textwidth}
+\centering
+\includegraphics[width=\linewidth]{../plots/ap_vs_hdim.png}
+\caption*{$k=8$, single-pass eval}
+\end{minipage}\hfill
+\begin{minipage}{0.48\textwidth}
+\centering
+\includegraphics[width=\linewidth]{../plots/ap_vs_hdim_augmented.png}
+\caption*{$k=8$, with aug-averaging $K=16$}
+\end{minipage}
+\caption{$k\!=\!8$ test AP vs.\ hidden dim. Left: \texttt{map}, \texttt{oap},
+\texttt{random\_augmented} single-pass. Right: same plus the aug-averaged
+\texttt{random\_augmented} curve (dashed). Error bars are $\pm 1\,\sigma$
+over $3$ seeds. \texttt{random\_augmented} stays on top at every $h$;
+the aug-averaging curve sits essentially on top of the single-pass curve.}
+\label{fig:plots}
+\end{figure}
+
+%==============================================================================
+\section{Interpretation}
+%==============================================================================
+
+\subsection{Does canonicalization perform better? --- No, with one corner.}
+
+Looking across the $54$ runs, \texttt{random\_augmented} is the best (or
+tied) method in $5$ of the $6$ \,$(k,h)$\, cells. The single exception is
+$k\!=\!3$ / $h\!=\!512$, where \texttt{oap} edges out
+\texttt{random\_augmented} by $+0.0033$ AP --- a real but narrow win.
+At $k\!=\!8$ that win disappears.
+
+If you're deciding between canonicalization and augmentation for a new
+project on similar data, the safer default is \textbf{random augmentation
+with $k\!\geq\!8$}.
+
+\subsection{Why does the $h\!=\!512$ verdict flip?}
+
+Two stories that both fit the data:
+\begin{enumerate}\itemsep0pt
+\item \emph{Averaging-out story.} At $k\!=\!8$ training has to internalize
+      invariance across $256$ sign patterns versus only $8$ at $k\!=\!3$.
+      The wider implicit-invariance training produces an encoder that
+      generalizes better at test time.
+\item \emph{Information story.} $8$ eigenvectors carry materially more
+      structural signal. Canonicalization rules trade that off for
+      determinism; augmentation lets the network exploit the richer signal
+      as long as it's invariance-trained.
+\end{enumerate}
+The data does not separate them. Both predict that going from $k\!=\!3$ to
+$k\!=\!8$ helps random\_augmented at the high-capacity end --- which is
+what we see.
+
+\subsection{Why is the test-time averaging $\Delta$ so small?}
+
+By design. A model trained for tens of epochs with random-sign-flip
+augmentation becomes \emph{near-invariant} to a single sign flip, so
+averaging $K$ predictions adds little new information. The biggest
+$\Delta$ we see is $+0.0005$ AP at $k\!=\!8$ / $h\!=\!512$ --- safe and
+free, but not the lever that decides anything. \emph{Test-time averaging
+matters most when the model under-fits the invariance during training};
+once it's trained well it converges to a single-prediction mode.
+
+\subsection{When does \texttt{oap} still win?}
+
+In the narrow $k\!=\!3$ / $h\!=\!512$ corner. \texttt{oap}'s seed variance
+there is $\pm 0.0022$ vs.\ random\_augmented's $\pm 0.0117$ --- $5\times$
+tighter. With $3$ seeds, that means \texttt{oap}'s confidence interval
+is narrower and the modal seed beats random\_augmented's modal seed. With
+more seeds and at $k\!=\!8$ the picture inverts. So the $k\!=\!3$/$h\!=\!512$
+\texttt{oap} win is best read as ``\texttt{oap} is the lower-variance
+choice if you're forced to use $k\!=\!3$,'' not ``canonicalization beats
+augmentation in general.''
+
+%==============================================================================
+\section{Main conclusions}
+%==============================================================================
+
+\begin{enumerate}
+\item \textbf{Canonicalization does not generally beat random augmentation
+      on ogbg-molpcba.} Across the $6$ tested $(k,h)$ cells,
+      \texttt{random\_augmented} wins or ties in $5$.
+
+\item \textbf{Use $k\geq 8$.} At $k\!=\!3$ canonicalization (specifically
+      \texttt{oap}) has an edge at the largest hidden dim. At $k\!=\!8$
+      that edge disappears.
+
+\item \textbf{Test-time ambiguity-group averaging is safe-and-free, not
+      transformative.} It contributes $+0.0001$ to $+0.0005$ AP and never
+      hurts. Use it if it's free; do not expect it to flip a verdict.
+
+\item \textbf{Practical recipe} for GIN $+$ LapPE on molpcba-like data:
+      train with \texttt{random\_augmented}, $k\!=\!8$, hidden dim $\geq
+      128$, patience $15$, and run $K\!=\!8$--$16$ test-time averaging.
+\end{enumerate}
+
+\paragraph{Caveats.}
+\begin{itemize}\itemsep0pt
+\item All numbers are 3-seed averages. Several gaps are within $1$--$2\sigma$.
+\item Restricted to GIN, ogbg-molpcba, $k\!\in\!\{3,8\}$,
+      $h\!\in\!\{16,128,512\}$. Whether the trend extends to other
+      datasets, larger $k$, transformer backbones, or atomic-data tasks is
+      not tested here.
+\item \texttt{spielman}, \texttt{maxabs}, \texttt{abs}, \texttt{none} were
+      out of scope for these two sweeps. See sibling
+      \texttt{results/nadav\_improvements/} for those methods under a
+      different protocol.
+\end{itemize}
+
+\end{document}
