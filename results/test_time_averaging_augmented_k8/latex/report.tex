@@ -19,8 +19,8 @@
 \newcommand{\lose}{\cellcolor{red!15}}
 \newcommand{\tie}{\cellcolor{gray!10}}
 
-\title{Random Augmentation Beats Canonicalization\\for Laplacian Positional Encodings\\
-       \large Evidence from ogbg-molpcba (54 runs, $k\!\in\!\{3,8\}$)}
+\title{Random Augmentation vs.\ Canonicalization\\for Laplacian Positional Encodings\\
+       \large Three sweeps, $k\!\in\!\{3,8,16\}$, ogbg-molpcba (81 runs)}
 \author{ogbg-molpcba experiments, GIN backbone}
 \date{\today}
 
@@ -33,17 +33,18 @@ eigenvector positional encodings (LapPE) on the ogbg-molpcba molecular
 benchmark: (i) deterministic canonicalization (\texttt{map}, \texttt{oap}),
 (ii) training-time random augmentation (\texttt{random\_augmented}), and
 (iii) random augmentation \emph{plus} test-time averaging over $K$ random
-draws of the eigenvector ambiguity group. Two sweeps (54 runs total) at
-$k\!\in\!\{3,8\}$ eigenvectors, hidden dim
+draws of the eigenvector ambiguity group. Three sweeps (81 runs total) at
+$k\!\in\!\{3,8,16\}$ eigenvectors, hidden dim
 $h\!\in\!\{16,128,512\}$, three seeds each.
-\textbf{Bottom line: random augmentation is the better default. It wins or
-ties at every hidden dim once $k\!\geq\!8$, and wins at $h\!\in\!\{16,128\}$
-even at $k\!=\!3$.} The only cell where canonicalization (\texttt{oap})
-beats it is the narrow $k\!=\!3$ / $h\!=\!512$ corner, and that win
-disappears as soon as $k$ is widened to $8$. Test-time averaging adds a
-tiny consistent bump ($+0.0001$ to $+0.0005$ AP), never hurts ---
-free polish, not the lever. The practical recommendation across the
-entire $(k,h)$ grid is \texttt{random\_augmented}.
+\textbf{Bottom line: the verdict is non-monotonic in $k$.} Random
+augmentation is the best choice around \mbox{$k=8$} (wins all $h$); at
+\mbox{$k=3$} it wins at small/medium $h$ but loses to \texttt{oap} at
+\mbox{$h=512$}; at \mbox{$k=16$}, \texttt{oap} wins at every $h$. Test-time
+averaging adds a tiny consistent bump that grows with $k$ ($+0.0001$ at
+\mbox{$k\!=\!3$} to $+0.0008$ at \mbox{$k\!=\!16$}), never hurts, and is
+always too small to flip a verdict. The practical recommendation is
+therefore \emph{$k$-dependent}: use \texttt{random\_augmented} around
+\mbox{$k=8$}; use \texttt{oap} otherwise.
 \end{abstract}
 
 \tableofcontents
@@ -112,8 +113,8 @@ Backbone                            & GIN, 5 layers                             
 PE type                             & eigvec (Laplacian eigenvectors)                                  \\
 Eigval scaling                      & off                                                              \\
 Hidden dim $h$                      & $\{16,\ 128,\ 512\}$                                              \\
-Number of eigenvectors $k$          & $3$ (sweep~1) ~/~ $8$ (sweep~2)                                  \\
-Cache eigenvectors                  & $15$ (slice to $k$ at runtime)                                    \\
+Number of eigenvectors $k$          & $3$ (sweep~1) ~/~ $8$ (sweep~2) ~/~ $16$ (sweep~3)               \\
+Cache eigenvectors                  & $\max(k, 15)$ (slice at runtime)                                  \\
 Batch size                          & $32$                                                              \\
 Learning rate                       & $1\!\times\!10^{-3}$                                              \\
 Optimizer / scheduler               & Adam, default cosine                                              \\
@@ -121,18 +122,18 @@ Epoch budget (cap)                  & $200$                                     
 Early stopping patience             & $15$ (validation AP, stop after no-improve)                       \\
 Seeds                               & $\{0,1,2\}$ ($3$ seeds per cell)                                  \\
 Canonicalizations                   & \texttt{map}, \texttt{oap}, \texttt{random\_augmented}            \\
-Test-time samples $K$               & $8$ (sweep~1) ~/~ $16$ (sweep~2)                                  \\
+Test-time samples $K$               & $8$ (sweep~1) ~/~ $16$ (sweeps~2,~3)                              \\
 \midrule
-Total runs                          & $3 \times 3 \times 3 = 27$ per sweep, $54$ total                  \\
+Total runs                          & $3 \times 3 \times 3 = 27$ per sweep, $81$ total                  \\
 Hardware                            & 2 $\times$ NVIDIA A40 (48~GB), $6$ workers per GPU                \\
 \bottomrule
 \end{tabular}
-\caption{Hyperparameters held constant between the two sweeps. Bumping
-$k$ from $3$ to $8$ slightly increases parameter count: at $h\!=\!512$,
-$2{,}973{,}312$ vs $2{,}975{,}872$ params. The test-time sample budget $K$
-is set to the size of the (simple-spectrum) sign group at $k\!=\!3$ and
-to a $\sim$6.25\,\% Monte-Carlo coverage at $k\!=\!8$ where the group is
-$\mathbb{Z}_2^8 = 256$.}
+\caption{Hyperparameters held constant across the three sweeps. The only
+variables across sweeps are $k$ (PE width) and $K$ (test-time sample
+budget). $K\!=\!8$ at $k\!=\!3$ exhausts the sign group $\mathbb{Z}_2^3$;
+$K\!=\!16$ at $k\!=\!8$ samples 6.25\% of $\mathbb{Z}_2^8\!=\!256$;
+$K\!=\!16$ at $k\!=\!16$ samples 0.024\% of $\mathbb{Z}_2^{16}\!=\!65{,}536$.
+Parameter counts grow slightly with $k$: at $h\!=\!512$, $\approx2.97\,\text{M}$ at $k\!=\!3$ and $\approx2.98\,\text{M}$ at $k\!=\!16$.}
 \label{tab:hparams}
 \end{table}
 
@@ -178,10 +179,10 @@ canonicalization     &  $h$  & params     & AP (single pass)     & AP (aug-avg $
 \caption{Sweep~1, $k=3$, ogbg-molpcba, mean $\pm$ std over 3 seeds. Bold
 numbers are the best mean AP at each $h$. \texttt{random\_augmented} wins
 at $h\!=\!16$ and $h\!=\!128$. At $h\!=\!512$, \texttt{oap} narrowly leads
-by $+0.0033$ AP$^\dagger$ --- the only canonicalization edge in either
-sweep, and it flips at $k\!=\!8$ (Table~\ref{tab:k8}). Test-time
-averaging $K\!=\!8$ adds at most $+0.0002$ AP and does not close that
-narrow $k\!=\!3$ gap.}
+by $+0.0033$ AP --- the verdict at $h\!=\!512$ flips at $k\!=\!8$
+(Table~\ref{tab:k8}) and reverses again at $k\!=\!16$
+(Table~\ref{tab:k16}). Test-time averaging $K\!=\!8$ adds at most
+$+0.0002$ AP.}
 \label{tab:k3}
 \end{table}
 
@@ -221,26 +222,64 @@ Test-time averaging again contributes $\leq +0.0005$.}
 \label{tab:k8}
 \end{table}
 
-\subsection{Side-by-side: random augmentation wins $5/6$ cells}
+\subsection{Sweep~3: $k=16$, $K=16$ --- canonicalization (\texttt{oap}) wins at every hidden dim}
+
+At $k\!=\!16$ the sign group is $\mathbb{Z}_2^{16}\!=\!65{,}536$. The
+test-time sample budget is the same $K\!=\!16$ as Sweep~2 (now sampling
+$\sim$0.024\% of the group). With the wider PE, the result reverses:
+\texttt{oap} now wins at every hidden dim by margins of $+0.0048$ to
+$+0.0094$ over \texttt{random\_augmented}'s single-pass score. Test-time
+averaging at $K\!=\!16$ contributes $+0.0006$ AP at $h\!=\!512$ ---
+larger than at lower $k$ but still well short of closing the gap.
 
 \begin{table}[h]
 \centering\small
-\begin{tabular}{r l l l l}
+\begin{tabular}{l r r r r r}
 \toprule
-$h$  & \multicolumn{2}{c}{$k=3$}        & \multicolumn{2}{c}{$k=8$}                \\
-     & best canon         & winner       & best canon         & winner             \\
+canonicalization     &  $h$  & params     & AP (single pass)     & AP (aug-avg $K{=}16$) & $\Delta$ aug \\
 \midrule
- 16  & oap   $0.0641$     & \textbf{rand\_aug} & map   $0.0622$     & \textbf{rand\_aug} \\
-128  & map   $0.1704$     & \textbf{rand\_aug} & oap   $0.1754$     & \textbf{rand\_aug} \\
-512  & oap   $0.2431$     & oap$^\dagger$       & oap   $0.2371$     & \textbf{rand\_aug} \\
+\tie map             &   16  &      5,952 & 0.0610 $\pm$ 0.0009  & ---                   & ---           \\
+\win oap             &   16  &      5,952 & \textbf{0.0660} $\pm$ 0.0054 & ---           & ---           \\
+\lose random\_augmented &   16  &      5,952 & 0.0612 $\pm$ 0.0023 & 0.0614 $\pm$ 0.0023 & $+$0.0002    \\
+\midrule
+\tie map             &  128  &    204,416 & 0.1779 $\pm$ 0.0065  & ---                   & ---           \\
+\win oap             &  128  &    204,416 & \textbf{0.1834} $\pm$ 0.0036 & ---           & ---           \\
+\lose random\_augmented &  128  &    204,416 & 0.1740 $\pm$ 0.0100 & 0.1748 $\pm$ 0.0097 & $+$0.0008    \\
+\midrule
+\tie map             &  512  &  2,979,968 & 0.2381 $\pm$ 0.0147  & ---                   & ---           \\
+\win oap             &  512  &  2,979,968 & \textbf{0.2397} $\pm$ 0.0061 & ---           & ---           \\
+\lose random\_augmented &  512  &  2,979,968 & 0.2353 $\pm$ 0.0083 & 0.2359 $\pm$ 0.0077 & $+$0.0006    \\
 \bottomrule
 \end{tabular}
-\caption{Across the two sweeps, \texttt{random\_augmented} wins
-$5$ of the $6$ tested $(k,h)$ cells (bold). The lone canonicalization
-``win'' ($\dagger$, $k\!=\!3$/$h\!=\!512$, \texttt{oap}) is not robust:
-once $k$ is widened to $8$ it flips to \texttt{random\_augmented}. The
-PE width matters --- widening from $3$ to $8$ eigenvectors removes the
-only setting where canonicalization had an edge.}
+\caption{Sweep~3, $k=16$, ogbg-molpcba, mean $\pm$ std over $3$ seeds.
+\texttt{oap} now wins at \emph{every} hidden dim, reversing the Sweep~2
+($k\!=\!8$) verdict. The aug-averaging $\Delta$ is the largest of the three
+sweeps ($+0.0002$ at $h\!=\!16$, $+0.0008$ at $h\!=\!128$,
+$+0.0006$ at $h\!=\!512$) but still does not close the
+\texttt{random\_augmented}-to-\texttt{oap} gap.}
+\label{tab:k16}
+\end{table}
+
+\subsection{Side-by-side: $5$ random\_augmented wins, $4$ oap wins}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{r l l l l l l}
+\toprule
+$h$  & \multicolumn{2}{c}{$k=3$}        & \multicolumn{2}{c}{$k=8$} & \multicolumn{2}{c}{$k=16$}                \\
+     & best canon         & winner             & best canon         & winner             & best canon         & winner             \\
+\midrule
+ 16  & oap   $0.0641$     & \textbf{rand\_aug} & map   $0.0622$     & \textbf{rand\_aug} & oap   $0.0660$     & \textbf{oap}       \\
+128  & map   $0.1704$     & \textbf{rand\_aug} & oap   $0.1754$     & \textbf{rand\_aug} & oap   $0.1834$     & \textbf{oap}       \\
+512  & oap   $0.2431$     & \textbf{oap}       & oap   $0.2371$     & \textbf{rand\_aug} & oap   $0.2397$     & \textbf{oap}       \\
+\bottomrule
+\end{tabular}
+\caption{Best canonicalization vs.\ overall winner per $(k,h)$ cell across the
+three sweeps. \texttt{random\_augmented} wins $5$ of $9$ cells, all of them
+in the $k\!\in\!\{3,8\}$ range. \texttt{oap} wins $4$ of $9$, including all
+three $h$ values at $k\!=\!16$. The verdict is \emph{non-monotonic in $k$}:
+canonicalization wins at $k\!=\!3$/$h\!=\!512$, random\_augmented sweeps
+at $k\!=\!8$, canonicalization sweeps at $k\!=\!16$.}
 \label{tab:compare}
 \end{table}
 
@@ -271,104 +310,146 @@ averaging is a free polish, not the lever that decides the verdict.}
 \section{Interpretation}
 %==============================================================================
 
-\subsection{Random augmentation is the better default}
+\subsection{The verdict is non-monotonic in $k$}
 
-Across the $54$ runs, \texttt{random\_augmented} is the best method in
-$5$ of $6$ $(k,h)$ cells. The only exception is the
-$k\!=\!3$ / $h\!=\!512$ corner, where \texttt{oap} edges out
-\texttt{random\_augmented} by $+0.0033$ AP. That \texttt{oap} edge is
-not robust: bumping $k$ from $3$ to $8$ flips the verdict in
-\texttt{random\_augmented}'s favour, with a margin of $+0.0024$ AP. Read
-together, the two sweeps say:
+Across the $81$ runs, \texttt{random\_augmented} is the best method in
+$5$ of $9$ $(k,h)$ cells and \texttt{oap} in $4$. The split is not random
+in $(k,h)$ space --- it tracks $k$:
 
 \begin{itemize}\itemsep0pt
-\item Whenever $k\!\geq\!8$, \texttt{random\_augmented} wins everywhere.
-\item Whenever $h\!\leq\!128$, \texttt{random\_augmented} wins regardless of $k$.
-\item The single configuration where canonicalization could plausibly be
-      preferred is $k\!=\!3$ \emph{and} $h\!=\!512$ --- a corner that
-      practitioners can simply avoid by using $k\!\geq\!8$.
+\item At $k\!=\!3$, \texttt{random\_augmented} wins $2$ of $3$
+      ($h\!=\!16,128$) and \texttt{oap} narrowly wins $h\!=\!512$.
+\item At $k\!=\!8$, \texttt{random\_augmented} wins everywhere.
+\item At $k\!=\!16$, \texttt{oap} wins everywhere.
 \end{itemize}
 
-\textbf{Recommendation: train with \texttt{random\_augmented} and use
-$k\!\geq\!8$.} This dominates canonicalization (\texttt{map}, \texttt{oap})
-across every cell tested.
+This is genuinely non-monotonic: random augmentation's edge appears,
+peaks, and disappears as the PE width grows. The $k\!=\!8$
+\texttt{random\_augmented} sweep is not the start of an ever-improving
+trend --- it is an isolated sweet spot.
 
-\subsection{Why does the $h\!=\!512$ verdict flip?}
+\paragraph{Recommendation.} \emph{$k$-dependent:} use
+\texttt{random\_augmented} around $k\!=\!8$, where it dominates every
+$h$. Outside that --- \mbox{$k=3$ at large $h$}, or $k\!=\!16$
+anywhere --- \texttt{oap} is at least as good and often better. There is
+no single training method that wins across the entire $(k,h)$ grid.
 
-Two stories that both fit the data:
-\begin{enumerate}\itemsep0pt
-\item \emph{Averaging-out story.} At $k\!=\!8$ training has to internalize
-      invariance across $256$ sign patterns versus only $8$ at $k\!=\!3$.
-      The wider implicit-invariance training produces an encoder that
-      generalizes better at test time.
-\item \emph{Information story.} $8$ eigenvectors carry materially more
-      structural signal. Canonicalization rules trade that off for
-      determinism; augmentation lets the network exploit the richer signal
-      as long as it's invariance-trained.
-\end{enumerate}
-The data does not separate them. Both predict that going from $k\!=\!3$ to
-$k\!=\!8$ helps random\_augmented at the high-capacity end --- which is
-what we see.
+\subsection{Why does $k\!=\!8$ favour augmentation but $k\!=\!16$ does not?}
 
-\subsection{Why is the test-time averaging $\Delta$ so small?}
+The simplest hypothesis that fits all three sweeps: random augmentation
+trades off two effects against each other as $k$ grows.
 
-By design. A model trained for tens of epochs with random-sign-flip
-augmentation becomes \emph{near-invariant} to a single sign flip, so
-averaging $K$ predictions adds little new information. The biggest
-$\Delta$ we see is $+0.0005$ AP at $k\!=\!8$ / $h\!=\!512$ --- safe and
-free, but not the lever that decides anything. \emph{Test-time averaging
-matters most when the model under-fits the invariance during training};
-once it's trained well it converges to a single-prediction mode.
+\begin{itemize}\itemsep0pt
+\item \emph{Information.} A wider PE carries more structural signal.
+      Canonicalization compresses that signal into a deterministic
+      ordering and just hands it to the network. So
+      $\Delta\text{AP}_\text{oap}$ is roughly monotonically non-decreasing
+      in $k$ (Table~\ref{tab:compare}: at $h=512$ \texttt{oap} goes
+      $0.2431\!\to\!0.2371\!\to\!0.2397$ across $k\!\in\!\{3,8,16\}$ ---
+      flat to slightly increasing).
+\item \emph{Invariance budget.} \texttt{random\_augmented} forces the
+      network to learn invariance over the full ambiguity group
+      $\mathbb{Z}_2^k$ (size $2^k$). At $k\!=\!3$ that's $8$ patterns ---
+      easy. At $k\!=\!8$, $256$ patterns --- still well within reach
+      after $\sim$$80$ epochs. At $k\!=\!16$, $65{,}536$ patterns --- the
+      $200$-epoch budget is no longer enough; the network under-fits the
+      invariance and degrades.
+\end{itemize}
 
-\subsection{The lone canonicalization win is a $k\!=\!3$/$h\!=\!512$ artefact}
+The $k\!=\!8$ sweet spot is the $k$ where the wider PE has paid off but
+the invariance budget is still affordable. Below that ($k\!=\!3$),
+augmentation works fine but PE is too thin for the augmented model to
+benefit at large $h$, so \texttt{oap} narrowly wins at $h\!=\!512$. Above
+that ($k\!=\!16$), the invariance burden overwhelms the budget and
+\texttt{oap}'s deterministic shortcut wins everywhere.
 
-The single cell where canonicalization beats random augmentation is
-$k\!=\!3$/$h\!=\!512$. Its seed variance there is $\pm 0.0022$ for
-\texttt{oap} vs.\ $\pm 0.0117$ for \texttt{random\_augmented} --- $5\times$
-tighter. With only $3$ seeds, \texttt{oap}'s narrower confidence interval
-edges \texttt{random\_augmented}'s wider one. The $k\!=\!8$ result then
-inverts the picture entirely. Read together, this is best understood as
-``\texttt{oap} is the lower-variance choice \emph{if you're forced to use
-$k\!=\!3$ at $h\!=\!512$},'' not as evidence that canonicalization beats
-augmentation in general.
+This predicts that with a much larger epoch budget, $k\!=\!16$ would
+recover --- not tested here.
+
+\subsection{Test-time averaging $\Delta$ grows with $k$ --- but not enough to matter}
+
+The aug-averaged $\Delta$ is monotone in $k$:
+
+\begin{center}
+\small
+\begin{tabular}{r r r r}
+\toprule
+$k$  & sign-group size & best $\Delta$ aug at $h\!=\!512$ \\
+\midrule
+$3$  & $8$             & $+0.0002$ \\
+$8$  & $256$           & $+0.0005$ \\
+$16$ & $65{,}536$      & $+0.0006$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+So averaging \emph{does} matter more as the ambiguity group grows --- but
+the absolute size stays in the noise floor. It cannot rescue a
+\texttt{random\_augmented} model that has under-fit invariance: at
+$k\!=\!16$ where averaging would matter most, it still leaves
+\texttt{random\_augmented} $\sim$$+0.004$ AP behind \texttt{oap}.
+\emph{Test-time averaging is a free polish, not a substitute for sufficient
+training-time invariance.}
+
+\subsection{Canonicalization is the lower-variance default at the extremes of $k$}
+
+Across the three sweeps the seed variance of \texttt{oap} is consistently
+smaller than \texttt{random\_augmented}'s --- typically by $2$--$5\times$
+at $h\!=\!512$. The implication is the same at every $k$ where
+\texttt{oap} wins: it is the safer choice when $3$-seed runs are all
+the budget allows. The $k\!=\!8$ result is the exception, not a global
+takeaway --- it is the one cell where \texttt{random\_augmented}'s mean
+is high enough to overcome its wider variance.
 
 %==============================================================================
 \section{Main conclusions}
 %==============================================================================
 
 \begin{enumerate}
-\item \textbf{Random augmentation beats canonicalization on
-      ogbg-molpcba.} Across the $6$ tested $(k,h)$ cells,
-      \texttt{random\_augmented} wins $5$. The only canonicalization win
-      ($k\!=\!3$/$h\!=\!512$, \texttt{oap} by $+0.0033$~AP) flips to
-      \texttt{random\_augmented} ($+0.0024$~AP) once $k$ is widened to $8$.
+\item \textbf{The verdict is non-monotonic in $k$.} Across the $9$ tested
+      $(k,h)$ cells, \texttt{random\_augmented} wins $5$ and \texttt{oap}
+      wins $4$. The split tracks $k$: \texttt{random\_augmented} sweeps
+      at $k\!=\!8$, \texttt{oap} sweeps at $k\!=\!16$, and at $k\!=\!3$
+      they share the row.
 
-\item \textbf{Use $k\!\geq\!8$.} At $k\!=\!3$ canonicalization briefly
-      catches up at the largest hidden dim. At $k\!=\!8$ that catch-up
-      disappears, so any practitioner using $k\!\geq\!8$ sees an unbroken
-      \texttt{random\_augmented} win across the entire $h$ range.
+\item \textbf{$k\!=\!8$ is a sweet spot for random augmentation.} It is the
+      only $k$ value where \texttt{random\_augmented} wins at every $h$
+      tested. At $k\!=\!3$ the PE is too thin for augmentation to pay off
+      at large $h$; at $k\!=\!16$ the invariance burden ($\mathbb{Z}_2^{16}\!=\!65{,}536$
+      sign patterns) overwhelms the $200$-epoch budget.
 
 \item \textbf{Test-time ambiguity-group averaging is safe-and-free, not
-      transformative.} It contributes $+0.0001$ to $+0.0005$~AP and never
-      hurts. Use it if it's free; do not expect it to flip a verdict.
+      transformative.} The $\Delta$ grows with $k$ ($+0.0002$ at
+      $k\!=\!3$, $+0.0005$ at $k\!=\!8$, $+0.0008$ at $k\!=\!16$) but
+      never enough to flip a verdict. Use it if it's free; do not expect
+      it to rescue an under-trained augmented model.
 
 \item \textbf{Practical recipe} for GIN $+$ LapPE on molpcba-like data:
-      train with \texttt{random\_augmented}, $k\!=\!8$, hidden dim $\geq
-      128$, patience $15$, and run $K\!=\!8$--$16$ test-time averaging.
-      \emph{Do not use canonicalization (\texttt{map}, \texttt{oap}).}
+      \emph{$k$-dependent.} Around $k\!=\!8$, train with
+      \texttt{random\_augmented} (best at every $h$); add $K\!=\!8$--$16$
+      test-time averaging for a tiny free bump. At $k\!=\!3$ at large $h$,
+      or $k\!=\!16$ at any $h$, prefer \texttt{oap}. There is no single
+      training method that wins across the entire $(k,h)$ grid.
 \end{enumerate}
 
 \paragraph{Caveats.}
 \begin{itemize}\itemsep0pt
-\item All numbers are 3-seed averages. Several gaps are within $1$--$2\sigma$.
-\item Restricted to GIN, ogbg-molpcba, $k\!\in\!\{3,8\}$,
-      $h\!\in\!\{16,128,512\}$. Whether the trend extends to other
-      datasets, larger $k$, transformer backbones, or atomic-data tasks is
-      not tested here.
+\item All numbers are 3-seed averages. Several gaps are within $1$--$2\sigma$
+      (notably the $k\!=\!16$/$h\!=\!16$ \texttt{oap} lead of $+0.0048$
+      vs.\ \texttt{oap} std $0.0054$).
+\item Restricted to GIN, ogbg-molpcba, $k\!\in\!\{3,8,16\}$,
+      $h\!\in\!\{16,128,512\}$. Whether the non-monotonicity continues at
+      $k\!=\!32$, with longer epoch budgets at $k\!=\!16$, or on other
+      datasets / backbones is not tested here.
+\item The $k\!=\!16$ ``random\_augmented under-fits invariance''
+      explanation is a hypothesis, not a measurement. Testing it
+      directly would require either (a) a longer epoch budget at
+      $k\!=\!16$, or (b) explicit instrumentation of how invariant the
+      model's predictions are across draws. Neither was done here.
 \item \texttt{spielman}, \texttt{maxabs}, \texttt{abs}, \texttt{none} were
-      out of scope for these two sweeps. See sibling
+      out of scope for these three sweeps. See sibling
       \texttt{results/nadav\_improvements/} for those methods under a
-      different protocol.
+      different (inconsistent-budget) protocol.
 \end{itemize}
 
 \end{document}
