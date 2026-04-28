@@ -1,0 +1,21 @@
+/home/snirhordan/miniconda3/envs/schnet-angle/lib/python3.10/site-packages/outdated/__init__.py:36: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import parse_version
+Device: cuda
+Loading ogbg-molpcba with map canonicalization (k=16)...
+  Train: 350343 graphs
+  Valid: 43793 graphs
+  Test:  43793 graphs
+  Tasks: 128
+Model parameters: 5,952
+Epoch   1/200  loss=0.0715  val_AP=0.0388  (512.8s)
+Epoch  10/200  loss=0.0528  val_AP=0.0508  (400.2s)
+Epoch  20/200  loss=0.0524  val_AP=0.0552  (386.6s)
+Epoch  30/200  loss=0.0523  val_AP=0.0569  (357.5s)
+Epoch  40/200  loss=0.0522  val_AP=0.0568  (372.6s)
+Epoch  50/200  loss=0.0521  val_AP=0.0568  (361.2s)
+Early stopping at epoch 59 (patience=15)
+
+Best epoch: 44
+Final val ap: 0.0593
+Final test ap: 0.0602
+Results saved to results/test_time_averaging_augmented_k16/gin/map_k16_h16_s0

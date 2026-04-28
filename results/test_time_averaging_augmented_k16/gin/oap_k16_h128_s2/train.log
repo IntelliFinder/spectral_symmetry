@@ -1,0 +1,33 @@
+/home/snirhordan/miniconda3/envs/schnet-angle/lib/python3.10/site-packages/outdated/__init__.py:36: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import parse_version
+Device: cuda
+Loading ogbg-molpcba with oap canonicalization (k=16)...
+  Train: 350343 graphs
+  Valid: 43793 graphs
+  Test:  43793 graphs
+  Tasks: 128
+Model parameters: 204,416
+Epoch   1/200  loss=0.0565  val_AP=0.0569  (372.9s)
+Epoch  10/200  loss=0.0462  val_AP=0.1319  (361.6s)
+Epoch  20/200  loss=0.0449  val_AP=0.1466  (259.3s)
+Epoch  30/200  loss=0.0442  val_AP=0.1560  (453.1s)
+Epoch  40/200  loss=0.0437  val_AP=0.1594  (356.7s)
+Epoch  50/200  loss=0.0433  val_AP=0.1679  (237.7s)
+Epoch  60/200  loss=0.0430  val_AP=0.1696  (243.8s)
+Epoch  70/200  loss=0.0427  val_AP=0.1743  (249.8s)
+Epoch  80/200  loss=0.0425  val_AP=0.1746  (329.1s)
+Epoch  90/200  loss=0.0424  val_AP=0.1801  (288.0s)
+Epoch 100/200  loss=0.0422  val_AP=0.1823  (330.9s)
+Epoch 110/200  loss=0.0420  val_AP=0.1833  (253.6s)
+Epoch 120/200  loss=0.0419  val_AP=0.1841  (237.4s)
+Epoch 130/200  loss=0.0417  val_AP=0.1868  (289.8s)
+Epoch 140/200  loss=0.0416  val_AP=0.1880  (262.5s)
+Epoch 150/200  loss=0.0415  val_AP=0.1863  (250.6s)
+Epoch 160/200  loss=0.0413  val_AP=0.1897  (251.6s)
+Epoch 170/200  loss=0.0413  val_AP=0.1900  (248.0s)
+Early stopping at epoch 179 (patience=15)
+
+Best epoch: 164
+Final val ap: 0.1905
+Final test ap: 0.1875
+Results saved to results/test_time_averaging_augmented_k16/gin/oap_k16_h128_s2
