@@ -258,24 +258,30 @@ internalise invariance over the much larger ambiguity group.
 canonicalization     &  $h$  & params     & AP (single pass)     & AP (aug-avg $K{=}16$) & $\Delta$ aug \\
 \midrule
 \tie map             &   16  &      5,952 & 0.0610 $\pm$ 0.0009  & ---                   & ---           \\
-\win oap             &   16  &      5,952 & \textbf{0.0660} $\pm$ 0.0054 & ---           & ---           \\
-\lose random\_augmented &   16  &      5,952 & 0.0612 $\pm$ 0.0023 & 0.0614 $\pm$ 0.0023 & $+$0.0002    \\
+\tie oap             &   16  &      5,952 & 0.0660$^\dagger$ $\pm$ 0.0054 & ---          & ---           \\
+\tie random\_augmented &   16  &      5,952 & 0.0612 $\pm$ 0.0023 & 0.0614 $\pm$ 0.0023 & $+$0.0002    \\
 \midrule
 \tie map             &  128  &    204,416 & 0.1779 $\pm$ 0.0065  & ---                   & ---           \\
-\win oap             &  128  &    204,416 & \textbf{0.1834} $\pm$ 0.0036 & ---           & ---           \\
-\lose random\_augmented &  128  &    204,416 & 0.1740 $\pm$ 0.0100 & 0.1748 $\pm$ 0.0097 & $+$0.0008    \\
+\tie oap             &  128  &    204,416 & 0.1834$^\dagger$ $\pm$ 0.0036 & ---          & ---           \\
+\tie random\_augmented &  128  &    204,416 & 0.1740 $\pm$ 0.0100 & 0.1748 $\pm$ 0.0097 & $+$0.0008    \\
 \midrule
 \tie map             &  512  &  2,979,968 & 0.2381 $\pm$ 0.0147  & ---                   & ---           \\
-\win oap             &  512  &  2,979,968 & \textbf{0.2397} $\pm$ 0.0061 & ---           & ---           \\
-\lose random\_augmented &  512  &  2,979,968 & 0.2353 $\pm$ 0.0083 & 0.2359 $\pm$ 0.0077 & $+$0.0006    \\
+\tie oap             &  512  &  2,979,968 & 0.2397$^\dagger$ $\pm$ 0.0061 & ---          & ---           \\
+\tie random\_augmented &  512  &  2,979,968 & 0.2353 $\pm$ 0.0083 & 0.2359 $\pm$ 0.0077 & $+$0.0006    \\
 \bottomrule
 \end{tabular}
 \caption{Sweep~3, $k=16$, ogbg-molpcba, mean $\pm$ std over $3$ seeds.
-\texttt{oap} now wins at \emph{every} hidden dim, reversing the Sweep~2
-($k\!=\!8$) verdict. The aug-averaging $\Delta$ is the largest of the three
-sweeps ($+0.0002$ at $h\!=\!16$, $+0.0008$ at $h\!=\!128$,
-$+0.0006$ at $h\!=\!512$) but still does not close the
-\texttt{random\_augmented}-to-\texttt{oap} gap.}
+Under the same $200$-epoch / patience-$15$ protocol as Sweeps~1--2,
+\texttt{oap} appears to win at every hidden dim$^\dagger$ by margins of
+$+0.0048$ to $+0.0094$ AP. The aug-averaging $\Delta$ is the largest of
+the three short-protocol sweeps ($+0.0002$ at $h\!=\!16$, $+0.0008$ at
+$h\!=\!128$, $+0.0006$ at $h\!=\!512$) but still does not close the
+gap. \textbf{$\dagger$ Sweep~4 (Table~\ref{tab:k16long}) shows these
+\texttt{oap} ``wins'' are not robust}: with $500$ epochs and disabled
+early stopping, \texttt{random\_augmented} beats every \texttt{oap}
+number in this table by $+0.0031$ to $+0.0086$ AP. The bolding and
+green-shading from earlier versions of this document have been removed
+accordingly.}
 \label{tab:k16}
 \end{table}
 
