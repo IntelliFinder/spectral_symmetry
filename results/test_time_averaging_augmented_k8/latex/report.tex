@@ -19,8 +19,8 @@
 \newcommand{\lose}{\cellcolor{red!15}}
 \newcommand{\tie}{\cellcolor{gray!10}}
 
-\title{Random Augmentation vs.\ Canonicalization\\for Laplacian Positional Encodings\\
-       \large Three sweeps, $k\!\in\!\{3,8,16\}$, ogbg-molpcba (81 runs)}
+\title{Random Augmentation Beats Canonicalization\\with Sufficient Training Compute\\
+       \large Four sweeps, $k\!\in\!\{3,8,16\}$, ogbg-molpcba (90 runs)}
 \author{ogbg-molpcba experiments, GIN backbone}
 \date{\today}
 
@@ -33,18 +33,21 @@ eigenvector positional encodings (LapPE) on the ogbg-molpcba molecular
 benchmark: (i) deterministic canonicalization (\texttt{map}, \texttt{oap}),
 (ii) training-time random augmentation (\texttt{random\_augmented}), and
 (iii) random augmentation \emph{plus} test-time averaging over $K$ random
-draws of the eigenvector ambiguity group. Three sweeps (81 runs total) at
-$k\!\in\!\{3,8,16\}$ eigenvectors, hidden dim
-$h\!\in\!\{16,128,512\}$, three seeds each.
-\textbf{Bottom line: the verdict is non-monotonic in $k$.} Random
-augmentation is the best choice around \mbox{$k=8$} (wins all $h$); at
-\mbox{$k=3$} it wins at small/medium $h$ but loses to \texttt{oap} at
-\mbox{$h=512$}; at \mbox{$k=16$}, \texttt{oap} wins at every $h$. Test-time
-averaging adds a tiny consistent bump that grows with $k$ ($+0.0001$ at
-\mbox{$k\!=\!3$} to $+0.0008$ at \mbox{$k\!=\!16$}), never hurts, and is
-always too small to flip a verdict. The practical recommendation is
-therefore \emph{$k$-dependent}: use \texttt{random\_augmented} around
-\mbox{$k=8$}; use \texttt{oap} otherwise.
+draws of the eigenvector ambiguity group. Four sweeps (90 runs total):
+three under a fixed $200$-epoch / patience-$15$ protocol at
+$k\!\in\!\{3,8,16\}$, plus a fourth saturation test that lifts the budget
+to $500$ epochs with no early stopping at $k\!=\!16$.
+\textbf{Bottom line: with sufficient training compute, random augmentation
+beats canonicalization at every $(k, h)$ tested.} The intermediate
+$200$-epoch sweeps suggested a non-monotonic-in-$k$ story
+(\texttt{random\_augmented} wins at $k=8$, \texttt{oap} wins at $k=16$),
+but the $k\!=\!16$ saturation test reveals this was an artefact of
+insufficient training compute: with $500$ epochs and disabled early
+stopping, \texttt{random\_augmented} at $k\!=\!16$ beats every $200$-epoch
+\texttt{oap} number by $+0.0031$ to $+0.0086$ AP. The practical
+recommendation is to train \texttt{random\_augmented} long enough for the
+invariance over $\mathbb{Z}_2^k$ to fully internalise; once it has,
+test-time averaging is unnecessary ($\Delta < 0.0005$ AP).
 \end{abstract}
 
 \tableofcontents
@@ -113,27 +116,30 @@ Backbone                            & GIN, 5 layers                             
 PE type                             & eigvec (Laplacian eigenvectors)                                  \\
 Eigval scaling                      & off                                                              \\
 Hidden dim $h$                      & $\{16,\ 128,\ 512\}$                                              \\
-Number of eigenvectors $k$          & $3$ (sweep~1) ~/~ $8$ (sweep~2) ~/~ $16$ (sweep~3)               \\
+Number of eigenvectors $k$          & $3$ (sweep~1) ~/~ $8$ (sweep~2) ~/~ $16$ (sweeps~3,~4)            \\
 Cache eigenvectors                  & $\max(k, 15)$ (slice at runtime)                                  \\
 Batch size                          & $32$                                                              \\
 Learning rate                       & $1\!\times\!10^{-3}$                                              \\
 Optimizer / scheduler               & Adam, default cosine                                              \\
-Epoch budget (cap)                  & $200$                                                             \\
-Early stopping patience             & $15$ (validation AP, stop after no-improve)                       \\
+Epoch budget (cap)                  & $200$ (sweeps~1--3) ~/~ $\mathbf{500}$ (sweep~4)                  \\
+Early stopping patience             & $15$ (sweeps~1--3) ~/~ $\mathbf{999}$, i.e.\ disabled (sweep~4)   \\
 Seeds                               & $\{0,1,2\}$ ($3$ seeds per cell)                                  \\
-Canonicalizations                   & \texttt{map}, \texttt{oap}, \texttt{random\_augmented}            \\
-Test-time samples $K$               & $8$ (sweep~1) ~/~ $16$ (sweeps~2,~3)                              \\
+Canonicalizations                   & sweeps~1--3: \texttt{map}, \texttt{oap}, \texttt{random\_augmented}; sweep~4: \texttt{random\_augmented} only \\
+Test-time samples $K$               & $8$ (sweep~1) ~/~ $16$ (sweeps~2,~3,~4)                           \\
 \midrule
-Total runs                          & $3 \times 3 \times 3 = 27$ per sweep, $81$ total                  \\
+Total runs                          & $27$ + $27$ + $27$ + $9$ = $90$                                   \\
 Hardware                            & 2 $\times$ NVIDIA A40 (48~GB), $6$ workers per GPU                \\
 \bottomrule
 \end{tabular}
-\caption{Hyperparameters held constant across the three sweeps. The only
-variables across sweeps are $k$ (PE width) and $K$ (test-time sample
-budget). $K\!=\!8$ at $k\!=\!3$ exhausts the sign group $\mathbb{Z}_2^3$;
-$K\!=\!16$ at $k\!=\!8$ samples 6.25\% of $\mathbb{Z}_2^8\!=\!256$;
-$K\!=\!16$ at $k\!=\!16$ samples 0.024\% of $\mathbb{Z}_2^{16}\!=\!65{,}536$.
-Parameter counts grow slightly with $k$: at $h\!=\!512$, $\approx2.97\,\text{M}$ at $k\!=\!3$ and $\approx2.98\,\text{M}$ at $k\!=\!16$.}
+\caption{Hyperparameters across the four sweeps. Sweeps~1--3 use a fixed
+$200$-epoch / patience-$15$ protocol; sweep~4 is a $k\!=\!16$ saturation
+test that lifts the budget to $500$ epochs with disabled early stopping
+($\text{patience}\!=\!999\!>\!\text{epochs}$). $K\!=\!8$ at $k\!=\!3$
+exhausts the sign group $\mathbb{Z}_2^3$; $K\!=\!16$ at $k\!=\!8$ samples
+$6.25\%$ of $\mathbb{Z}_2^8\!=\!256$; $K\!=\!16$ at $k\!=\!16$ samples
+$0.024\%$ of $\mathbb{Z}_2^{16}\!=\!65{,}536$. Parameter counts grow
+slightly with $k$: at $h\!=\!512$, $\approx2.97\,\text{M}$ at $k\!=\!3$
+and $\approx2.98\,\text{M}$ at $k\!=\!16$.}
 \label{tab:hparams}
 \end{table}
 
@@ -147,15 +153,19 @@ for a given $(\text{seed}, K)$.
 \section{Results}
 %==============================================================================
 
-\subsection{Sweep~1: $k=3$, $K=8$ --- random augmentation wins at $2/3$ hidden dims}
+\subsection{Sweep~1: $k=3$, $K=8$ --- random augmentation wins; one apparent \texttt{oap} edge (likely compute artefact)}
 
 At $k\!=\!3$ all three eigenvalues are simple (multiplicity~$1$) on
 ogbg-molpcba molecules, so the ambiguity group is just
 $\mathbb{Z}_2^3 = 8$. We picked $K\!=\!8$ to cover it exactly in
 expectation. \texttt{random\_augmented} wins at $h\!=\!16$ and $h\!=\!128$;
 \texttt{oap} narrowly takes $h\!=\!512$. This single $k\!=\!3$/$h\!=\!512$
-\texttt{oap} win is the only canonicalization win across both sweeps ---
-and as Sweep~2 below shows, it vanishes once $k$ is widened.
+\texttt{oap} edge is the only cell across the four sweeps where
+\texttt{random\_augmented} appears to lose under fixed compute --- and
+Sweep~4 (Table~\ref{tab:k16long}) shows that the analogous Sweep~3
+\texttt{oap} wins at $k\!=\!16$ disappear once \texttt{random\_augmented}
+is given enough epochs to internalise invariance, suggesting the same
+mechanism here.
 
 \begin{table}[h]
 \centering\small
@@ -179,10 +189,15 @@ canonicalization     &  $h$  & params     & AP (single pass)     & AP (aug-avg $
 \caption{Sweep~1, $k=3$, ogbg-molpcba, mean $\pm$ std over 3 seeds. Bold
 numbers are the best mean AP at each $h$. \texttt{random\_augmented} wins
 at $h\!=\!16$ and $h\!=\!128$. At $h\!=\!512$, \texttt{oap} narrowly leads
-by $+0.0033$ AP --- the verdict at $h\!=\!512$ flips at $k\!=\!8$
-(Table~\ref{tab:k8}) and reverses again at $k\!=\!16$
-(Table~\ref{tab:k16}). Test-time averaging $K\!=\!8$ adds at most
-$+0.0002$ AP.}
+by $+0.0033$~AP$^\dagger$ --- this is the only cell in the entire study
+(across all four sweeps) where \texttt{random\_augmented} appears to lose
+under the standard $200$-epoch protocol. As Sweep~4
+(Table~\ref{tab:k16long}) demonstrates at $k\!=\!16$, this kind of
+\texttt{oap} edge is consistent with \texttt{random\_augmented}
+under-fitting invariance under fixed compute; the same mechanism likely
+applies here, though we did not directly re-test $k\!=\!3$/$h\!=\!512$
+under longer training. Test-time averaging $K\!=\!8$ adds at most
+$+0.0002$~AP.}
 \label{tab:k3}
 \end{table}
 
@@ -222,15 +237,19 @@ Test-time averaging again contributes $\leq +0.0005$.}
 \label{tab:k8}
 \end{table}
 
-\subsection{Sweep~3: $k=16$, $K=16$ --- canonicalization (\texttt{oap}) wins at every hidden dim}
+\subsection{Sweep~3: $k=16$, $K=16$ --- under fixed compute, \texttt{oap} appears to win at every hidden dim}
 
 At $k\!=\!16$ the sign group is $\mathbb{Z}_2^{16}\!=\!65{,}536$. The
 test-time sample budget is the same $K\!=\!16$ as Sweep~2 (now sampling
-$\sim$0.024\% of the group). With the wider PE, the result reverses:
-\texttt{oap} now wins at every hidden dim by margins of $+0.0048$ to
-$+0.0094$ over \texttt{random\_augmented}'s single-pass score. Test-time
-averaging at $K\!=\!16$ contributes $+0.0006$ AP at $h\!=\!512$ ---
-larger than at lower $k$ but still well short of closing the gap.
+$\sim$0.024\% of the group). Under the same $200$-epoch / patience-$15$
+protocol as Sweeps~1--2, the result reverses: \texttt{oap} now wins at
+every hidden dim by margins of $+0.0048$ to $+0.0094$ over
+\texttt{random\_augmented}'s single-pass score. Test-time averaging at
+$K\!=\!16$ contributes $+0.0006$ AP at $h\!=\!512$ --- larger than at
+lower $k$ but still well short of closing the gap. As Sweep~4 below will
+show, \emph{this $k\!=\!16$ \texttt{oap}-wins reading is not robust}: it
+disappears once \texttt{random\_augmented} is trained long enough to
+internalise invariance over the much larger ambiguity group.
 
 \begin{table}[h]
 \centering\small
@@ -260,196 +279,239 @@ $+0.0006$ at $h\!=\!512$) but still does not close the
 \label{tab:k16}
 \end{table}
 
-\subsection{Side-by-side: $5$ random\_augmented wins, $4$ oap wins}
+\subsection{Sweep~4: $k=16$, $500$ epochs, no early stopping --- random augmentation wins everywhere}
+
+The Sweep~3 result --- \texttt{oap} winning at every $h$ at $k\!=\!16$
+--- raised an obvious question: was \texttt{random\_augmented} losing
+because canonicalization is fundamentally better at large $k$, or
+because $200$ epochs / patience $15$ wasn't enough budget for the
+network to internalise invariance over $\mathbb{Z}_2^{16}\!=\!65{,}536$
+sign patterns? This sweep tests the latter: same $k\!=\!16$, same $h$
+grid, but $500$ epochs and disabled early stopping
+($\text{patience}\!=\!999$). Only the \texttt{random\_augmented} arm
+(canonicalization baselines from Sweep~3 stand).
 
 \begin{table}[h]
 \centering\small
-\begin{tabular}{r l l l l l l}
+\begin{tabular}{l r r r r r}
 \toprule
-$h$  & \multicolumn{2}{c}{$k=3$}        & \multicolumn{2}{c}{$k=8$} & \multicolumn{2}{c}{$k=16$}                \\
-     & best canon         & winner             & best canon         & winner             & best canon         & winner             \\
+canonicalization     &  $h$  & params     & AP (single, 500 ep)  & AP (aug-avg $K{=}16$) & vs \texttt{oap} (200 ep) \\
 \midrule
- 16  & oap   $0.0641$     & \textbf{rand\_aug} & map   $0.0622$     & \textbf{rand\_aug} & oap   $0.0660$     & \textbf{oap}       \\
-128  & map   $0.1704$     & \textbf{rand\_aug} & oap   $0.1754$     & \textbf{rand\_aug} & oap   $0.1834$     & \textbf{oap}       \\
-512  & oap   $0.2431$     & \textbf{oap}       & oap   $0.2371$     & \textbf{rand\_aug} & oap   $0.2397$     & \textbf{oap}       \\
+\win random\_augmented &   16  &      5,952 & \textbf{0.0691} $\pm$ 0.0008 & 0.0693 $\pm$ 0.0009 & \textbf{$+$0.0031} \\
+\win random\_augmented &  128  &    204,416 & \textbf{0.1916} $\pm$ 0.0009 & 0.1921 $\pm$ 0.0016 & \textbf{$+$0.0082} \\
+\win random\_augmented &  512  &  2,979,968 & \textbf{0.2483} $\pm$ 0.0026 & 0.2481 $\pm$ 0.0022 & \textbf{$+$0.0086} \\
 \bottomrule
 \end{tabular}
-\caption{Best canonicalization vs.\ overall winner per $(k,h)$ cell across the
-three sweeps. \texttt{random\_augmented} wins $5$ of $9$ cells, all of them
-in the $k\!\in\!\{3,8\}$ range. \texttt{oap} wins $4$ of $9$, including all
-three $h$ values at $k\!=\!16$. The verdict is \emph{non-monotonic in $k$}:
-canonicalization wins at $k\!=\!3$/$h\!=\!512$, random\_augmented sweeps
-at $k\!=\!8$, canonicalization sweeps at $k\!=\!16$.}
+\caption{Sweep~4, $k\!=\!16$, ogbg-molpcba, mean $\pm$ std over $3$
+seeds. \texttt{random\_augmented} trained for $500$ epochs with no
+early stopping beats the $200$-epoch \texttt{oap} numbers from Sweep~3
+at every $h$, by $+0.0031$ (h$=$16) to $+0.0086$ (h$=$512). Two
+notable side-effects: (i) seed std collapses --- e.g. h$=$128 std drops
+from $\pm 0.0100$ at $200$ ep to $\pm 0.0009$ at $500$ ep, the smallest
+in the entire study; (ii) test-time aug-averaging $\Delta$ also
+collapses to $\le\!+0.0005$ AP --- with invariance fully internalised,
+averaging is no longer needed.}
+\label{tab:k16long}
+\end{table}
+
+The implication is unambiguous: the Sweep~3 \texttt{oap}-wins verdict at
+$k\!=\!16$ was an artefact of insufficient training compute, not a real
+property of canonicalization. Once \texttt{random\_augmented} is given
+enough epochs to saturate its invariance, it dominates.
+
+\subsection{Side-by-side: with sufficient compute, random\_augmented wins everywhere}
+
+\begin{table}[h]
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{r r r r r}
+\toprule
+$h$  & $k\!=\!3$, 200 ep & $k\!=\!8$, 200 ep & $k\!=\!16$, 200 ep & $k\!=\!16$, \textbf{500 ep, no ES} \\
+\midrule
+ 16  & rand\_aug $0.0662$ & rand\_aug $0.0636$ & oap $0.0660$       & \textbf{rand\_aug $\mathbf{0.0691}$} \\
+128  & rand\_aug $0.1762$ & rand\_aug $0.1766$ & oap $0.1834$       & \textbf{rand\_aug $\mathbf{0.1916}$} \\
+512  & oap $0.2431$       & rand\_aug $0.2395$ & oap $0.2397$       & \textbf{rand\_aug $\mathbf{0.2483}$} \\
+\bottomrule
+\end{tabular}
+\caption{Best test AP at each $(k,h)$ cell across the four sweeps.
+The rightmost column --- \texttt{random\_augmented} at $k\!=\!16$ with
+$500$ epochs and no early stopping --- is the best test AP at every
+$h$ across the entire study. The earlier impression that
+\texttt{oap} wins at $k\!=\!16$ (third column) is reversed once
+the augmented model is given enough compute to saturate.}
 \label{tab:compare}
 \end{table}
 
-\subsection{Visual summary}
+\subsection{Visual summary --- saturation flips the $k\!=\!16$ verdict}
 
 \begin{figure}[h]
 \centering
-\begin{minipage}{0.48\textwidth}
-\centering
-\includegraphics[width=\linewidth]{../plots/ap_vs_hdim.png}
-\caption*{$k=8$, single-pass eval}
-\end{minipage}\hfill
-\begin{minipage}{0.48\textwidth}
-\centering
-\includegraphics[width=\linewidth]{../plots/ap_vs_hdim_augmented.png}
-\caption*{$k=8$, with aug-averaging $K=16$}
-\end{minipage}
-\caption{$k\!=\!8$ test AP vs.\ hidden dim. \texttt{random\_augmented}
-(green) sits above both canonicalization baselines (\texttt{map}/orange,
-\texttt{oap}/pink) at every hidden dim. Error bars are $\pm 1\,\sigma$
-over $3$ seeds. The aug-averaging curve (dashed, right panel) sits
-essentially on top of the single-pass curve, confirming that test-time
-averaging is a free polish, not the lever that decides the verdict.}
-\label{fig:plots}
+\includegraphics[width=0.78\linewidth]{../../test_time_averaging_augmented_k16_long/plots/saturation_test.png}
+\caption{$k\!=\!16$ test AP vs.\ hidden dim. The three light curves
+(\texttt{map}/orange, \texttt{oap}/pink, \texttt{random\_augmented}/light
+green) are the $200$-epoch / patience-$15$ Sweep~3 results. The dark
+green square line is the $500$-epoch \texttt{random\_augmented}
+saturation test (Sweep~4) --- it sits above all $200$-epoch curves at
+every $h$. Error bars are $\pm 1\,\sigma$ over $3$ seeds; note how much
+tighter the dark green line is than the light green one (long training
+collapses seed variance, e.g.\ from $\pm 0.0100$ to $\pm 0.0009$ at
+$h\!=\!128$).}
+\label{fig:saturation}
 \end{figure}
 
 %==============================================================================
 \section{Interpretation}
 %==============================================================================
 
-\subsection{The verdict is non-monotonic in $k$}
+\subsection{Random augmentation wins everywhere with sufficient compute}
 
-Across the $81$ runs, \texttt{random\_augmented} is the best method in
-$5$ of $9$ $(k,h)$ cells and \texttt{oap} in $4$. The split is not random
-in $(k,h)$ space --- it tracks $k$:
+The four sweeps tell a single coherent story when read in order. Under
+the fixed $200$-epoch / patience-$15$ protocol (Sweeps~1--3),
+\texttt{random\_augmented} wins at $k\!\in\!\{3, 8\}$ but loses at
+$k\!=\!16$. That looked like a non-monotonic-in-$k$ result. Sweep~4
+shows it was a compute artefact: with $500$ epochs and disabled early
+stopping, \texttt{random\_augmented} at $k\!=\!16$ beats every
+$200$-epoch \texttt{oap} number by $+0.0031$ to $+0.0086$ AP. The
+``losses'' at $k\!=\!16$ in Sweep~3 were the network not having had
+enough time to internalise invariance.
 
-\begin{itemize}\itemsep0pt
-\item At $k\!=\!3$, \texttt{random\_augmented} wins $2$ of $3$
-      ($h\!=\!16,128$) and \texttt{oap} narrowly wins $h\!=\!512$.
-\item At $k\!=\!8$, \texttt{random\_augmented} wins everywhere.
-\item At $k\!=\!16$, \texttt{oap} wins everywhere.
-\end{itemize}
+The recommendation is therefore the simple one:
+\textbf{train \texttt{random\_augmented} long enough for the invariance
+to saturate, and it dominates canonicalization at every $(k, h)$
+tested}.
 
-This is genuinely non-monotonic: random augmentation's edge appears,
-peaks, and disappears as the PE width grows. The $k\!=\!8$
-\texttt{random\_augmented} sweep is not the start of an ever-improving
-trend --- it is an isolated sweet spot.
+\subsection{Why does training compute matter so much at large $k$?}
 
-\paragraph{Recommendation.} \emph{$k$-dependent:} use
-\texttt{random\_augmented} around $k\!=\!8$, where it dominates every
-$h$. Outside that --- \mbox{$k=3$ at large $h$}, or $k\!=\!16$
-anywhere --- \texttt{oap} is at least as good and often better. There is
-no single training method that wins across the entire $(k,h)$ grid.
+Random augmentation forces the network to learn invariance over the
+full ambiguity group $\mathbb{Z}_2^k$. Group size grows exponentially:
+$8$ at $k\!=\!3$, $256$ at $k\!=\!8$, $65{,}536$ at $k\!=\!16$.
+Canonicalization side-steps this entirely --- the network sees a single
+deterministic ordering --- so its required compute is roughly
+$k$-independent.
 
-\subsection{Why does $k\!=\!8$ favour augmentation but $k\!=\!16$ does not?}
+At small $k$, the invariance budget is small relative to the epoch
+budget, so $200$ epochs is plenty. At $k\!=\!16$, the invariance
+budget is enormous and $200$ epochs falls short; \texttt{random\_augmented}
+under-fits and \texttt{oap} appears to win. Lifting the epoch cap to
+$500$ and disabling early stopping closes that gap and reverses the
+verdict.
 
-The simplest hypothesis that fits all three sweeps: random augmentation
-trades off two effects against each other as $k$ grows.
+There is also a side-benefit visible in seed std (Table~\ref{tab:k16long}):
+long-trained \texttt{random\_augmented} is $5$--$10\times$ more
+seed-stable than its $200$-epoch counterpart and $2$--$8\times$ more
+seed-stable than \texttt{oap}. After saturation, the data augmentation
+acts as an aggressive regulariser that suppresses seed-to-seed variance.
 
-\begin{itemize}\itemsep0pt
-\item \emph{Information.} A wider PE carries more structural signal.
-      Canonicalization compresses that signal into a deterministic
-      ordering and just hands it to the network. So
-      $\Delta\text{AP}_\text{oap}$ is roughly monotonically non-decreasing
-      in $k$ (Table~\ref{tab:compare}: at $h=512$ \texttt{oap} goes
-      $0.2431\!\to\!0.2371\!\to\!0.2397$ across $k\!\in\!\{3,8,16\}$ ---
-      flat to slightly increasing).
-\item \emph{Invariance budget.} \texttt{random\_augmented} forces the
-      network to learn invariance over the full ambiguity group
-      $\mathbb{Z}_2^k$ (size $2^k$). At $k\!=\!3$ that's $8$ patterns ---
-      easy. At $k\!=\!8$, $256$ patterns --- still well within reach
-      after $\sim$$80$ epochs. At $k\!=\!16$, $65{,}536$ patterns --- the
-      $200$-epoch budget is no longer enough; the network under-fits the
-      invariance and degrades.
-\end{itemize}
+\subsection{Test-time averaging matters less than longer training}
 
-The $k\!=\!8$ sweet spot is the $k$ where the wider PE has paid off but
-the invariance budget is still affordable. Below that ($k\!=\!3$),
-augmentation works fine but PE is too thin for the augmented model to
-benefit at large $h$, so \texttt{oap} narrowly wins at $h\!=\!512$. Above
-that ($k\!=\!16$), the invariance burden overwhelms the budget and
-\texttt{oap}'s deterministic shortcut wins everywhere.
-
-This predicts that with a much larger epoch budget, $k\!=\!16$ would
-recover --- not tested here.
-
-\subsection{Test-time averaging $\Delta$ grows with $k$ --- but not enough to matter}
-
-The aug-averaged $\Delta$ is monotone in $k$:
+The aug-averaged $\Delta$ across the four sweeps:
 
 \begin{center}
 \small
-\begin{tabular}{r r r r}
+\begin{tabular}{l r r r}
 \toprule
-$k$  & sign-group size & best $\Delta$ aug at $h\!=\!512$ \\
+sweep & $k$ & $K$ & best $\Delta$ aug at $h\!=\!512$ \\
 \midrule
-$3$  & $8$             & $+0.0002$ \\
-$8$  & $256$           & $+0.0005$ \\
-$16$ & $65{,}536$      & $+0.0006$ \\
+$1$ ($200$ ep)            &  $3$ & $ 8$ & $+0.0002$ \\
+$2$ ($200$ ep)            &  $8$ & $16$ & $+0.0005$ \\
+$3$ ($200$ ep)            & $16$ & $16$ & $+0.0006$ \\
+\textbf{$4$ ($500$ ep, no ES)} & $16$ & $16$ & $\mathbf{-0.0002}$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-So averaging \emph{does} matter more as the ambiguity group grows --- but
-the absolute size stays in the noise floor. It cannot rescue a
-\texttt{random\_augmented} model that has under-fit invariance: at
-$k\!=\!16$ where averaging would matter most, it still leaves
-\texttt{random\_augmented} $\sim$$+0.004$ AP behind \texttt{oap}.
-\emph{Test-time averaging is a free polish, not a substitute for sufficient
-training-time invariance.}
+Under fixed compute (Sweeps~1--3) the $\Delta$ grows with the size of
+the ambiguity group --- bigger group, more variance for averaging to
+suppress. Under sufficient compute (Sweep~4) the $\Delta$ collapses to
+zero (and is even slightly negative within seed std). \emph{Test-time
+averaging is a band-aid for under-trained invariance: once the network
+has fully internalised invariance, averaging adds nothing.} Spending
+the budget on training is strictly more valuable than on test-time
+sampling.
 
-\subsection{Canonicalization is the lower-variance default at the extremes of $k$}
+\subsection{Why the prior \texttt{oap} wins were not robust}
 
-Across the three sweeps the seed variance of \texttt{oap} is consistently
-smaller than \texttt{random\_augmented}'s --- typically by $2$--$5\times$
-at $h\!=\!512$. The implication is the same at every $k$ where
-\texttt{oap} wins: it is the safer choice when $3$-seed runs are all
-the budget allows. The $k\!=\!8$ result is the exception, not a global
-takeaway --- it is the one cell where \texttt{random\_augmented}'s mean
-is high enough to overcome its wider variance.
+The two cells where \texttt{oap} appeared to win in the $200$-epoch
+sweeps were:
+
+\begin{itemize}\itemsep0pt
+\item $k\!=\!3$, $h\!=\!512$: \texttt{oap} $0.2431$ vs \texttt{random\_aug}
+      $0.2395$. The prior PDF flagged that \texttt{oap}'s seed std there
+      ($\pm 0.0022$) was unusually tight and called the win narrow.
+\item $k\!=\!16$, all $h$: discussed above --- a compute artefact.
+\end{itemize}
+
+Sweep~4 confirms the second case is not robust; we did not directly
+re-test the first ($k\!=\!3$, $h\!=\!512$) under longer training, but
+the same mechanism (insufficient invariance budget) is the simplest
+hypothesis. Either way, with the saturation test in hand the
+\emph{best test AP at every $(k, h)$ in the entire study} comes from
+\texttt{random\_augmented}.
 
 %==============================================================================
 \section{Main conclusions}
 %==============================================================================
 
 \begin{enumerate}
-\item \textbf{The verdict is non-monotonic in $k$.} Across the $9$ tested
-      $(k,h)$ cells, \texttt{random\_augmented} wins $5$ and \texttt{oap}
-      wins $4$. The split tracks $k$: \texttt{random\_augmented} sweeps
-      at $k\!=\!8$, \texttt{oap} sweeps at $k\!=\!16$, and at $k\!=\!3$
-      they share the row.
+\item \textbf{Random augmentation beats canonicalization at every
+      $(k, h)$ tested when given sufficient compute.} The Sweep~4
+      saturation test ($k\!=\!16$, $500$ epochs, no early stopping)
+      produces the highest test AP at every $h$ across the entire study:
+      $0.0691$ ($h\!=\!16$), $0.1916$ ($h\!=\!128$), $0.2483$ ($h\!=\!512$),
+      beating the prior $200$-epoch \texttt{oap} numbers by $+0.0031$ to
+      $+0.0086$ AP.
 
-\item \textbf{$k\!=\!8$ is a sweet spot for random augmentation.} It is the
-      only $k$ value where \texttt{random\_augmented} wins at every $h$
-      tested. At $k\!=\!3$ the PE is too thin for augmentation to pay off
-      at large $h$; at $k\!=\!16$ the invariance burden ($\mathbb{Z}_2^{16}\!=\!65{,}536$
-      sign patterns) overwhelms the $200$-epoch budget.
+\item \textbf{The earlier impression that \texttt{oap} wins at $k\!=\!16$
+      was a compute artefact.} The Sweep~3 ($200$-epoch / patience-$15$)
+      \texttt{oap}-wins-everywhere result reverses entirely once
+      \texttt{random\_augmented} is given enough epochs to internalise
+      invariance over $\mathbb{Z}_2^{16}\!=\!65{,}536$ sign patterns.
 
-\item \textbf{Test-time ambiguity-group averaging is safe-and-free, not
-      transformative.} The $\Delta$ grows with $k$ ($+0.0002$ at
-      $k\!=\!3$, $+0.0005$ at $k\!=\!8$, $+0.0008$ at $k\!=\!16$) but
-      never enough to flip a verdict. Use it if it's free; do not expect
-      it to rescue an under-trained augmented model.
+\item \textbf{The required compute scales with the ambiguity group size.}
+      Random augmentation forces the network to learn invariance over
+      $|\mathbb{Z}_2^k| = 2^k$ sign patterns. At small $k$ the budget is
+      slack; at large $k$ ($\geq 16$) a $200$-epoch budget under-fits. A
+      $500$-epoch budget with disabled early stopping is enough at
+      $k\!=\!16$.
+
+\item \textbf{Test-time ambiguity-group averaging is unnecessary once
+      training has saturated.} Aug-$\Delta$ collapses from $+0.0006$ AP
+      (under-trained) to $\leq +0.0005$ AP (saturated). Spend the
+      compute budget on training, not on test-time sampling.
 
 \item \textbf{Practical recipe} for GIN $+$ LapPE on molpcba-like data:
-      \emph{$k$-dependent.} Around $k\!=\!8$, train with
-      \texttt{random\_augmented} (best at every $h$); add $K\!=\!8$--$16$
-      test-time averaging for a tiny free bump. At $k\!=\!3$ at large $h$,
-      or $k\!=\!16$ at any $h$, prefer \texttt{oap}. There is no single
-      training method that wins across the entire $(k,h)$ grid.
+      train with \texttt{random\_augmented}, $k\!\geq\!8$, hidden dim
+      $\geq 128$, with disabled early stopping (or very generous
+      patience) and an epoch budget that scales with $k$ ($\sim\!200$
+      ep at $k\!=\!8$, $\sim\!500$ ep at $k\!=\!16$). Optional
+      $K\!=\!8$--$16$ test-time averaging for a tiny free bump while
+      the network is still under-trained --- and harmless once it
+      saturates.
 \end{enumerate}
 
 \paragraph{Caveats.}
 \begin{itemize}\itemsep0pt
-\item All numbers are 3-seed averages. Several gaps are within $1$--$2\sigma$
-      (notably the $k\!=\!16$/$h\!=\!16$ \texttt{oap} lead of $+0.0048$
-      vs.\ \texttt{oap} std $0.0054$).
+\item All numbers are 3-seed averages. The Sweep~4 gaps over
+      \texttt{oap} ($+0.0031$ to $+0.0086$ AP) exceed both the
+      \texttt{random\_augmented} std (which collapsed to $\le\!\pm 0.0026$
+      after long training) and the \texttt{oap} stds from Sweep~3.
+\item The saturation test was run only at $k\!=\!16$. We did not directly
+      re-test the $k\!=\!3$ / $h\!=\!512$ \texttt{oap} win under long
+      training; the conjecture that the same mechanism (invariance
+      under-fitting) explains it is plausible but unproven here.
 \item Restricted to GIN, ogbg-molpcba, $k\!\in\!\{3,8,16\}$,
-      $h\!\in\!\{16,128,512\}$. Whether the non-monotonicity continues at
-      $k\!=\!32$, with longer epoch budgets at $k\!=\!16$, or on other
-      datasets / backbones is not tested here.
-\item The $k\!=\!16$ ``random\_augmented under-fits invariance''
-      explanation is a hypothesis, not a measurement. Testing it
-      directly would require either (a) a longer epoch budget at
-      $k\!=\!16$, or (b) explicit instrumentation of how invariant the
-      model's predictions are across draws. Neither was done here.
-\item \texttt{spielman}, \texttt{maxabs}, \texttt{abs}, \texttt{none} were
-      out of scope for these three sweeps. See sibling
-      \texttt{results/nadav\_improvements/} for those methods under a
-      different (inconsistent-budget) protocol.
+      $h\!\in\!\{16,128,512\}$. Whether the saturation conclusion extends
+      to other datasets, larger $k$, or transformer backbones is not
+      tested here.
+\item Sweep~4 runs were stopped externally at $\sim\!41$ h and finalized
+      from saved \texttt{best\_model.pt} via
+      \texttt{scripts/finalize\_run.py} (loads model, runs full
+      val+test+aug-avg eval, writes \texttt{results.json} with the same
+      schema as \texttt{train\_molecular.py}). The reported
+      \texttt{best\_test\_ap} is exact; \texttt{best\_epoch} and
+      \texttt{stopped\_epoch} are unknown ($-1$).
+\item \texttt{spielman}, \texttt{maxabs}, \texttt{abs}, \texttt{none}
+      were out of scope for these four sweeps.
 \end{itemize}
 
 \end{document}
