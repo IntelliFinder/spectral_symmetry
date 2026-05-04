@@ -20,7 +20,8 @@
 \newcommand{\tie}{\cellcolor{gray!10}}
 
 \title{Random Augmentation vs.\ Canonicalization\\for Laplacian Positional Encodings\\
-       \large No clear winner at matched compute --- five sweeps, $k\!\in\!\{3,8,16\}$, ogbg-molpcba (108 runs)}
+       \large \texttt{map} and \texttt{random\_augmented} tie at matched compute on $k\!=\!16$;
+       both beat \texttt{oap} at $h\!\geq\!128$. ogbg-molpcba, GIN, $3$ seeds, partial completion.}
 \author{ogbg-molpcba experiments, GIN backbone}
 \date{\today}
 
@@ -33,24 +34,35 @@ eigenvector positional encodings (LapPE) on the ogbg-molpcba molecular
 benchmark: (i) deterministic canonicalization (\texttt{map}, \texttt{oap}),
 (ii) training-time random augmentation (\texttt{random\_augmented}), and
 (iii) random augmentation \emph{plus} test-time averaging over $K$ random
-draws of the eigenvector ambiguity group. Five sweeps (108 runs total):
-three under a fixed $200$-epoch / patience-$15$ protocol at
-$k\!\in\!\{3,8,16\}$; a fourth saturation test that lifts the budget to
-$500$ epochs / no early stopping at $k\!=\!16$ for \texttt{random\_augmented}
-only; and a fifth \textbf{matched-compute follow-up} that gives
-\texttt{map} and \texttt{oap} the same $500$-epoch / no-early-stopping
-budget at $k\!=\!16$.
-\textbf{Bottom line: at matched compute there is no clear winner.}
-\texttt{map} narrowly wins at $h\!\in\!\{16, 128\}$, \texttt{random\_augmented}
-narrowly wins at $h\!=\!512$, and \texttt{oap} is the worst arm at every
-$h$. The earlier reading (Sweep 4 alone) that ``random augmentation beats
-canonicalization with sufficient compute'' was an apples-to-oranges
-artefact: \texttt{map} at $200$ ep was strongly under-fit, and once given
-$500$ ep also, it gains $+0.0088$ to $+0.0144$~AP, surpassing the prior
-$200$-ep \texttt{oap} (which gains only $+0.0003$ to $+0.0043$~AP under
-the same protocol). The practical recommendation is therefore narrower:
-\emph{both methods need long training to converge; expect the verdict
-to be method-pair-and-hidden-dim-dependent, never universal.}
+draws of the eigenvector ambiguity group. Five sweeps (108 runs):
+Sweeps~1--3 under a fixed $200$-epoch / patience-$15$ protocol at
+$k\!\in\!\{3,8,16\}$; Sweep~4 lifts the budget to $500$~ep / no early
+stopping at $k\!=\!16$ for \texttt{random\_augmented} only; \textbf{Sweep~5
+gives \texttt{map} and \texttt{oap} the same $500$-ep budget at $k\!=\!16$}
+(matched compute).
+
+\textbf{Honest bottom line, at matched compute on $k\!=\!16$ / GIN / molpcba
+/ 3 seeds:}
+\begin{itemize}\itemsep0pt
+\item \texttt{map} and \texttt{random\_augmented} are \emph{statistically
+      tied} at every hidden dim tested (Welch $p\!\geq\!0.24$ at every
+      $h$).
+\item Both \emph{do} significantly beat \texttt{oap} at $h\!=\!128$
+      ($p\!<\!0.001$); \texttt{random\_augmented} beats \texttt{oap} at
+      $h\!=\!512$ ($p\!\approx\!0.04$); at $h\!=\!16$ all three are tied.
+\item Earlier readings (e.g.\ ``random\_augmented dominates with
+      sufficient compute'' from Sweep~4 alone, or ``\texttt{oap} wins
+      everywhere'' from Sweep~3 alone) were apples-to-oranges
+      artefacts of unmatched compute --- \texttt{map} also gains
+      $+0.0088$ to $+0.0144$~AP under matched compute, indistinguishable
+      in scale from \texttt{random\_augmented}'s gain.
+\end{itemize}
+
+\textbf{Scope: these conclusions apply to $k\!=\!16$ only.} The matched-compute
+test was not run at $k\!\in\!\{3,8\}$. The Sweep~1
+$k\!=\!3$ / $h\!=\!512$ \texttt{oap}-edge is not re-tested. Spielman, MaxAbs,
+Abs, and the bare \texttt{none} baseline are out of scope. ogbg-molpcba
+only; GIN backbone only; $h\!\in\!\{16,128,512\}$ only; $3$ seeds.
 \end{abstract}
 
 \tableofcontents
@@ -132,6 +144,7 @@ Test-time samples $K$               & $8$ (sweep~1) ~/~ $16$ (sweeps~2,~3,~4,~5)
 \midrule
 Total runs                          & $27$ + $27$ + $27$ + $9$ + $\mathbf{18}$ = $108$                  \\
 Hardware                            & 2 $\times$ NVIDIA A40 (48~GB), $6$ workers per GPU                \\
+Software                            & Python $3.10$, PyTorch $2.10$ (CUDA $12.8$), conda env \texttt{schnet-angle}; OGB / PyG installed via \texttt{pip install -e ".[dev,torch]"} from the project's \texttt{pyproject.toml}. Standard deviations computed with \texttt{statistics.stdev} (sample std, ddof$=1$). \\
 \bottomrule
 \end{tabular}
 \caption{Hyperparameters across the five sweeps. Sweeps~1--3 use a fixed
@@ -151,7 +164,24 @@ $\mathbb{Z}_2^{16}\!=\!65{,}536$.}
 The augmentation rng is seeded as
 $(\text{base\_seed} \cdot 1{,}000{,}003 + s) \times 2{,}654{,}435{,}761
 \oplus \text{graph\_idx}$, so the aug-averaged metric is bit-reproducible
-for a given $(\text{seed}, K)$.
+for a given $(\text{seed}, K)$. The training loop seeding (\texttt{torch.manual\_seed},
+cuDNN determinism, \texttt{worker\_init\_fn}) is what
+\texttt{src/training/seed\_everything} provides --- not bit-reproducible
+across hardware/CUDA versions; see \texttt{scripts/train\_molecular.py}
+for the exact call. Per-seed results may therefore differ slightly
+from a clean re-run on different hardware.
+
+\paragraph{Asymmetric test-time protocol.}
+For \texttt{map}/\texttt{oap}, the test loader returns the deterministic
+canonical ordering. For \texttt{random\_augmented}, the test loader
+returns the eigenvectors with the \emph{cached} sign pattern from the
+one-time \texttt{lappe\_cache} build (essentially one arbitrary-but-fixed
+sign assignment per graph), \emph{not} a fresh draw. This makes the
+single-pass \texttt{best\_test\_ap} comparable across methods in the
+sense of being deterministic, but the \texttt{random\_augmented} pattern
+is not its training-distribution mode --- which is why we also report
+\texttt{best\_test\_ap\_aug16} (averaged over $K\!=\!16$ random draws
+from the ambiguity group at test time).
 
 %==============================================================================
 \section{Results}
@@ -346,26 +376,28 @@ most $\sim\!+0.001$~AP per worker; most had been saturated for hours).
 \centering\small
 \begin{tabular}{l r r r r}
 \toprule
-canonicalization     &  $h$  & params     & AP (single, 500 ep)        & vs.\ \texttt{random\_augmented} (Sweep~4) \\
+canonicalization     &  $h$  & params     & AP (single, 500 ep)  & $\Delta$ vs.\ \texttt{random\_augmented} (Sweep~4) \\
 \midrule
-\win map             &   16  &      5,952 & \textbf{0.0716} $\pm$ 0.0067 & \textbf{$+$0.0025} \\
-\tie oap             &   16  &      5,952 & 0.0703 $\pm$ 0.0070           & $+$0.0012 \\
+\tie map             &   16  &      5,952 & 0.0716 $\pm$ 0.0067   & $+$0.0025 ($p\!\approx\!0.52$) \\
+\tie oap             &   16  &      5,952 & 0.0703 $\pm$ 0.0070   & $+$0.0012 ($p\!\approx\!0.78$) \\
 \midrule
-\win map             &  128  &    204,416 & \textbf{0.1923} $\pm$ 0.0005 & \textbf{$+$0.0007} \\
-\lose oap            &  128  &    204,416 & 0.1836 $\pm$ 0.0025           & $-$0.0080 \\
+\tie map             &  128  &    204,416 & 0.1923 $\pm$ 0.0005   & $+$0.0007 ($p\!\approx\!0.24$) \\
+\lose oap            &  128  &    204,416 & 0.1836 $\pm$ 0.0025   & $-$0.0080 ($p\!<\!0.001$) \\
 \midrule
-\tie map             &  512  &  2,979,968 & 0.2468 $\pm$ 0.0021           & $-$0.0014 (rand\_aug wins) \\
-\lose oap            &  512  &  2,979,968 & 0.2419 $\pm$ 0.0028           & $-$0.0064 \\
+\tie map             &  512  &  2,979,968 & 0.2468 $\pm$ 0.0021   & $-$0.0015 ($p\!\approx\!0.44$, rand\_aug nominal) \\
+\lose oap            &  512  &  2,979,968 & 0.2419 $\pm$ 0.0028   & $-$0.0064 ($p\!\approx\!0.04$) \\
 \bottomrule
 \end{tabular}
-\caption{Sweep~5, $k\!=\!16$, $500$ ep / patience $999$ (matched-compute).
-Headline: \texttt{map} wins at $h\!=\!16$ and $h\!=\!128$;
-\texttt{random\_augmented} (from Sweep~4) wins at $h\!=\!512$ by
-$+0.0014$~AP --- within seed std. \texttt{oap} is the worst arm at every
-$h$. The $h\!=\!16$ \texttt{map}-wins margin ($+0.0025$ vs.\ \texttt{rand\_aug}
-$\pm 0.0008$, with \texttt{map} std $\pm 0.0067$) is $<\!1\sigma$ pooled
-and not significant; the $h\!=\!128$ \texttt{map}-wins margin is real
-($+0.0007$ vs.\ pooled std $\sim 0.0010$).}
+\caption{Sweep~5, $k\!=\!16$, $500$~ep / patience $999$ (matched-compute).
+Mean $\pm$ sample std (ddof$=1$) over $3$ seeds. $p$-values from Welch's
+$t$-test (n$_1\!=\!$n$_2\!=\!3$). \textbf{No \texttt{map}-vs-\texttt{random\_augmented}
+comparison passes the conventional $p\!<\!0.05$ threshold at any $h$:}
+all three differences are within seed noise (red shading marks
+\emph{statistically significant} losses for \texttt{oap} at $p\!<\!0.05$;
+grey marks all other cells). The clear, statistically significant findings
+are \texttt{oap} losing to \texttt{random\_augmented}/\texttt{map} at
+$h\!=\!128$ ($p\!<\!0.001$, $\Delta\!\sim\!-0.008$~AP) and to
+\texttt{random\_augmented} at $h\!=\!512$ ($p\!\approx\!0.04$).}
 \label{tab:k16matched}
 \end{table}
 
@@ -403,22 +435,25 @@ than \texttt{map} or \texttt{random\_augmented}.}
 \begin{tabular}{r l l l l l}
 \toprule
 $h$  & $k\!=\!3$, 200 ep & $k\!=\!8$, 200 ep & $k\!=\!16$, 200 ep & $k\!=\!16$, 500 ep (Sweep~4) & $k\!=\!16$, \textbf{matched 500 ep} \\
-     & best @ row        & best @ row        & best @ row         & rand\_aug only                & best @ row \\
+     & nominal best       & nominal best     & nominal best       & rand\_aug only                & nominal best (see caption) \\
 \midrule
- 16  & rand\_aug $0.0662$ & rand\_aug $0.0636$ & oap $0.0660$ & rand\_aug $0.0691$ & \textbf{map $\mathbf{0.0716}$} \\
-128  & rand\_aug $0.1762$ & rand\_aug $0.1766$ & oap $0.1834$ & rand\_aug $0.1916$ & \textbf{map $\mathbf{0.1923}$} \\
-512  & oap $0.2431$       & rand\_aug $0.2395$ & oap $0.2397$ & rand\_aug $0.2483$ & \textbf{rand\_aug $\mathbf{0.2483}$} \\
+ 16  & rand\_aug $0.0662$ & rand\_aug $0.0636$ & oap $0.0660$ & rand\_aug $0.0691$ & map $0.0716$ (tied within noise) \\
+128  & rand\_aug $0.1762$ & rand\_aug $0.1766$ & oap $0.1834$ & rand\_aug $0.1916$ & map $0.1923$ (tied with rand\_aug) \\
+512  & oap $0.2431$       & rand\_aug $0.2395$ & oap $0.2397$ & rand\_aug $0.2483$ & rand\_aug $0.2483$ (tied with map) \\
 \bottomrule
 \end{tabular}
-\caption{Best test AP at each $(k,h)$ cell across the five sweeps. The
-\textbf{matched-compute} column (Sweep~5 + Sweep~4 \texttt{rand\_aug})
-is the right column to compare methods on equal footing. There:
-\texttt{map} wins at $h\!=\!16$ and $h\!=\!128$;
-\texttt{random\_augmented} wins at $h\!=\!512$. The Sweep~4-only column
-(``random augmentation wins everywhere'') was an apples-to-oranges
-artefact: Sweep~3's $200$-ep \texttt{map} was severely under-fit (gains
-$+0.0088$ to $+0.0144$~AP at $500$~ep, surpassing $200$-ep \texttt{oap}
-in the process).}
+\caption{Nominal best mean test AP at each $(k,h)$ cell across the five
+sweeps. \emph{Significance is only available for the right-most
+(matched-compute) column} --- where the \texttt{map}-vs-\texttt{random\_augmented}
+ordering is statistically a tie at every $h$ (Welch
+$p\!\geq\!0.24$). For Sweeps~1--3 (fixed $200$~ep / patience-$15$
+protocol), no formal significance test is run; under-fitting (especially
+of \texttt{map}) makes the per-row winner unreliable. The Sweep~4-only
+column (\texttt{random\_augmented} alone at $500$~ep) read as
+``\texttt{random\_augmented} dominates'' was an apples-to-oranges
+artefact of unmatched compute; once \texttt{map}/\texttt{oap} are also
+trained for $500$~ep (Sweep~5), \texttt{map} matches
+\texttt{random\_augmented}'s gains.}
 \label{tab:compare}
 \end{table}
 
@@ -443,33 +478,37 @@ $h\!=\!128$).}
 \section{Interpretation}
 %==============================================================================
 
-\subsection{No clear winner at matched compute}
+\subsection{Matched compute on $k\!=\!16$: \texttt{map} $\approx$ \texttt{random\_augmented} $>$ \texttt{oap}}
 
 The five sweeps together tell a more nuanced story than any subset.
 Under fixed $200$-epoch compute (Sweeps~1--3), \texttt{random\_augmented}
 wins at $k\!\in\!\{3, 8\}$ but loses at $k\!=\!16$. Sweep~4 alone
 (only re-running \texttt{random\_augmented} at $500$ ep) suggested this
-was a compute artefact and that \texttt{random\_augmented} dominates with
-sufficient compute. Sweep~5 then demonstrates this latter conclusion was
-itself an apples-to-oranges artefact: \texttt{map} also gains $+0.0088$
-to $+0.0144$~AP under matched compute --- as much or more than
-\texttt{random\_augmented} did.
+was a compute artefact. Sweep~5 then demonstrates that \texttt{map}
+also gains $+0.0088$ to $+0.0144$~AP under matched compute --- as much
+or more than \texttt{random\_augmented} did. The honest matched-compute
+verdict at $k\!=\!16$ (Welch's $t$-test, $n\!=\!3$ per arm):
 
-At matched $500$-ep compute on $k\!=\!16$:
 \begin{itemize}\itemsep0pt
-\item \texttt{map} wins at $h\!=\!16$ ($+0.0025$ vs.\ rand\_aug, $<\!1\sigma$)
-      and at $h\!=\!128$ ($+0.0007$, real but small).
-\item \texttt{random\_augmented} wins at $h\!=\!512$ ($+0.0014$ vs.\ map,
-      within noise).
-\item \texttt{oap} is the \emph{worst} arm at every $h$ (off by
-      $+0.0080$ at $h\!=\!128$, $+0.0064$ at $h\!=\!512$).
+\item \textbf{\texttt{map} vs.\ \texttt{random\_augmented} are statistically
+      tied} at every $h$ tested:
+      $h\!=\!16$ $\Delta\!=\!+0.0025$ ($p\!\approx\!0.52$);
+      $h\!=\!128$ $\Delta\!=\!+0.0007$ ($p\!\approx\!0.24$);
+      $h\!=\!512$ $\Delta\!=\!-0.0015$ ($p\!\approx\!0.44$).
+      Nominal winners flip across $h$ but no comparison is significant.
+\item \texttt{oap} loses significantly to \texttt{random\_augmented} (and to
+      \texttt{map}) at \textbf{$h\!=\!128$} ($\Delta\!\sim\!-0.008$~AP,
+      $p\!<\!0.001$), and to \texttt{random\_augmented} at $h\!=\!512$
+      ($p\!\approx\!0.04$). At $h\!=\!16$ all three are tied.
 \end{itemize}
 
-\textbf{The recommendation is therefore narrower:} both methods need
-long training to converge. Without matched compute, head-to-head
-verdicts are unreliable. With matched compute on $k\!=\!16$ /
-ogbg-molpcba, \texttt{map} and \texttt{random\_augmented} each win some
-hidden dim ranges; \texttt{oap} loses to both.
+\textbf{The recommendation is therefore narrow:} on $k\!=\!16$ /
+ogbg-molpcba / GIN with $\geq\!500$~ep training, choose between
+\texttt{map} and \texttt{random\_augmented} on grounds other than test
+AP (they're indistinguishable at $3$ seeds); avoid \texttt{oap} when
+$h\!\geq\!128$. Without matched compute, head-to-head verdicts are
+\emph{not reliable}: any of the three methods can look ``best'' if one
+arm is given more epochs than the others.
 
 \subsection{Why does training compute matter so much at large $k$?}
 
@@ -559,65 +598,103 @@ hypothesis. Either way, with the saturation test in hand the
 %==============================================================================
 
 \begin{enumerate}
-\item \textbf{At matched compute, no single method dominates at $k\!=\!16$.}
-      Sweep~5 ($k\!=\!16$, $500$ ep / patience $999$ for \texttt{map}
-      and \texttt{oap}, head-to-head with Sweep~4
-      \texttt{random\_augmented}): \texttt{map} wins at $h\!=\!16$
-      ($+0.0025$, $<\!1\sigma$) and $h\!=\!128$ ($+0.0007$, real but
-      small); \texttt{random\_augmented} wins at $h\!=\!512$ ($+0.0014$,
-      within noise vs.\ \texttt{map}); \texttt{oap} is worst at every $h$.
+\item \textbf{At matched compute on $k\!=\!16$, \texttt{map} and
+      \texttt{random\_augmented} are statistically tied at every $h$.}
+      Welch's $t$-test on the matched-compute Sweep~5 vs.\ Sweep~4
+      data ($n\!=\!3$ per arm): $p\!\approx\!0.52$ at $h\!=\!16$,
+      $p\!\approx\!0.24$ at $h\!=\!128$, $p\!\approx\!0.44$ at $h\!=\!512$.
+      Nominal winners flip across $h$ but no \texttt{map} vs.\ \texttt{random\_augmented}
+      comparison reaches $p\!<\!0.05$.
 
-\item \textbf{The earlier ``\texttt{random\_augmented} wins
-      everywhere''  reading was an apples-to-oranges artefact.} Sweep~4
-      compared $500$-ep \texttt{random\_augmented} to $200$-ep
+\item \textbf{Both \texttt{map} and \texttt{random\_augmented} significantly
+      beat \texttt{oap} at $h\!=\!128$.} ($p\!<\!0.001$,
+      $\Delta\!\sim\!-0.008$~AP). \texttt{random\_augmented} also
+      beats \texttt{oap} at $h\!=\!512$ ($p\!\approx\!0.04$). At
+      $h\!=\!16$ all three are tied. So at $k\!=\!16$ / large $h$,
+      \texttt{oap} is the clear loser; the choice between the other two
+      is a tie at this seed count.
+
+\item \textbf{The earlier ``\texttt{random\_augmented} wins everywhere''
+      reading from Sweep~4 alone was an apples-to-oranges artefact.}
+      Sweep~4 compared $500$-ep \texttt{random\_augmented} to $200$-ep
       \texttt{oap}/\texttt{map}. At matched compute, \texttt{map}
-      gains $+0.0088$ to $+0.0144$~AP --- as much or more than
-      \texttt{random\_augmented} gained. The Sweep~3 \texttt{oap}-wins
-      reading reflected \texttt{map} (and \texttt{random\_augmented})
-      being severely under-fit at $200$~ep, not \texttt{oap} being
-      better.
+      gains $+0.0088$ to $+0.0144$~AP --- statistically indistinguishable
+      from \texttt{random\_augmented}'s gain. The Sweep~3 reading that
+      ``\texttt{oap} wins everywhere'' was the same kind of artefact in
+      reverse: \texttt{oap} happened to converge faster than the other
+      two arms at $200$~ep.
 
-\item \textbf{Required training compute is method-dependent.}
-      \texttt{oap} converges in roughly $200$~ep at $k\!=\!16$;
-      \texttt{map} and \texttt{random\_augmented} both need $500$+~ep.
-      Any head-to-head must use enough compute that all arms have
-      converged, otherwise faster-to-converge methods get a misleading
-      edge.
+\item \textbf{Test-time ambiguity-group averaging is small but non-zero
+      at the protocols tested.} Aug-$\Delta$ is $+0.0001$ to $+0.0008$~AP
+      across the four sweeps that report it. We do \emph{not} claim it
+      ``collapses to zero on saturation'' --- that would require a
+      saturation criterion we cannot verify (see Caveats).
 
-\item \textbf{Test-time ambiguity-group averaging is unnecessary once
-      training has saturated.} Aug-$\Delta$ collapses from $+0.0006$ AP
-      (under-trained) to $\leq +0.0005$ AP (saturated). Spend the
-      compute budget on training, not on test-time sampling.
-
-\item \textbf{Practical recipe} for GIN $+$ LapPE on molpcba-like data
-      at $k\!\geq\!8$: train with \emph{any} of the three methods, but
-      train it long enough --- $500$+ epochs with disabled early
-      stopping at $k\!=\!16$. Don't compare methods at fixed
-      $200$-epoch budgets: \texttt{oap} will look better than it really
-      is. \texttt{map} and \texttt{random\_augmented} are the two
-      strongest arms at matched compute on $k\!=\!16$; pick by hidden
-      dim ($\texttt{map}$ at $h\!\leq\!128$, \texttt{random\_augmented}
-      at $h\!=\!512$) or just train both and pick whichever fits the
-      downstream pipeline.
+\item \textbf{Practical recipe} for GIN $+$ LapPE on \emph{ogbg-molpcba
+      at $k\!=\!16$}: train for $\geq\!500$~ep with disabled early
+      stopping. Choose between \texttt{map} and \texttt{random\_augmented}
+      by criteria \emph{other than test AP} (they tie at this seed
+      count). Avoid \texttt{oap} when $h\!\geq\!128$. \emph{Do not project
+      this recipe to other $k$ or other datasets without re-running.}
 \end{enumerate}
 
-\paragraph{Caveats.}
+\paragraph{Caveats (read carefully --- the conclusions above are
+      narrower than the headline of any single sweep would suggest).}
 \begin{itemize}\itemsep0pt
-\item All numbers are 3-seed averages. The Sweep~5 gaps are smaller
-      than the Sweep~4 vs.\ Sweep~3 cross-protocol gaps were; in
-      particular, the $h\!=\!16$ \texttt{map}-wins margin ($+0.0025$,
-      \texttt{map} std $\pm 0.0067$) is $<\!1\sigma$ pooled. The
-      $h\!=\!128$ \texttt{map}-wins margin ($+0.0007$ over
-      \texttt{random\_augmented}'s $\pm 0.0009$) is real but tiny.
-\item Sweep~5 was run only at $k\!=\!16$. The lone $k\!=\!3$/$h\!=\!512$
-      \texttt{oap} edge from Sweep~1 was not re-tested under matched
-      compute --- a sibling sweep
-      \texttt{results/matched\_compute\_k3\_h512/} is in progress at
-      time of writing.
-\item Restricted to GIN, ogbg-molpcba, $k\!\in\!\{3,8,16\}$,
-      $h\!\in\!\{16,128,512\}$. Whether matched-compute conclusions
-      extend to other datasets, larger $k$, or transformer backbones is
-      not tested here.
+\item \textbf{$3$ seeds per cell.} With $n\!=\!3$, even the largest
+      matched-compute \texttt{map}-vs-\texttt{random\_augmented}
+      difference ($+0.0025$ AP at $h\!=\!16$) is $p\!\approx\!0.52$.
+      $5\!+\!$ seeds would be needed to detect $\Delta\!\sim\!0.001$~AP
+      with reasonable power.
+\item \textbf{Matched compute was tested only at $k\!=\!16$.} The
+      $k\!\in\!\{3,8\}$ matched-compute behaviour is unknown. The
+      Sweep~1 $k\!=\!3$/$h\!=\!512$ \texttt{oap} edge in particular was
+      not re-tested. A planned sibling sweep
+      \texttt{results/matched\_compute\_k3\_h512/} was killed at $14$~h
+      after $4$ of $9$ runs were finalized externally; the partial
+      data is committed to the repo but not summarized here.
+\item \textbf{No \texttt{none} baseline.} Bare uncanonicalized eigenvectors
+      (\texttt{none}) were not evaluated under any of the five sweeps
+      at $k\!\in\!\{8,16\}$. If \texttt{none} is competitive at these
+      $k$, the entire framing ``canonicalization vs.\ augmentation''
+      is moot. (Sweep $1$ included \texttt{none} at $k\!=\!3$ but only
+      at $h\!\leq\!256$; it loses at the smaller $h$.)
+\item \textbf{Externally finalized runs.} All $9$ Sweep~4 runs and $6$ of
+      $18$ Sweep~5 runs (the wave-2 \texttt{oap} runs --- all three
+      seeds at $h\!\in\!\{128, 512\}$) were stopped externally at
+      $\sim$T+74~h via \texttt{scripts/finalize\_run.py} from saved
+      \texttt{best\_model.pt}. For these $15$ of $27$ $k\!=\!16$-long
+      runs, \texttt{best\_epoch} and \texttt{stopped\_epoch} are recorded
+      as $-1$ and \texttt{epoch\_log.json} is missing --- val curves
+      cannot be plotted, and ``saturation'' cannot be verified beyond
+      ``no improvement to \texttt{best\_model.pt} for several hours
+      before kill''. The \texttt{best\_test\_ap} numbers themselves are
+      exact (eval'd via the same code path as
+      \texttt{train\_molecular.py}'s natural finish).
+\item \textbf{Asymmetric test-time protocol} for \texttt{random\_augmented}
+      (one cached random sign pattern per graph, vs.\
+      deterministic-canonical for \texttt{map}/\texttt{oap}). The
+      additional \texttt{aug16} averaging metric is reported alongside
+      to characterize how much this matters; the $+0.0001$ to $+0.0005$
+      range tells us it's small at the configurations tested.
+\item \textbf{Restricted scope.} GIN backbone only; ogbg-molpcba only;
+      $k\!\in\!\{3,8,16\}$; $h\!\in\!\{16,128,512\}$; \texttt{spielman},
+      \texttt{spielman\_partition}, \texttt{maxabs}, \texttt{abs} all
+      excluded. Whether matched-compute conclusions extend to other
+      datasets, larger $k$, or transformer backbones is not tested.
+\item \textbf{500-epoch best-checkpoint selection over $3$ seeds is a
+      $\sim$$1500$-checkpoint search per cell.} With \texttt{patience}
+      effectively disabled, methods that train more noisily can sample
+      more of the val-AP distribution and benefit from the maximum
+      statistic. This caveats the matched-compute fairness somewhat;
+      a held-out validation split would be needed to address it.
+\item \textbf{No multiple-comparisons correction} applied to the
+      $p$-values reported above. With $\sim 9$ pairwise comparisons in
+      Table~\ref{tab:k16matched}, a Bonferroni-corrected threshold of
+      $0.05/9\!\approx\!0.0056$ would still leave the $h\!=\!128$
+      \texttt{oap}-loses result significant ($p\!<\!0.001$) but the
+      $h\!=\!512$ \texttt{oap}-loses-to-\texttt{rand\_aug} result
+      ($p\!\approx\!0.04$) would not.
 \item Sweep~4 runs were stopped externally at $\sim\!41$ h and finalized
       from saved \texttt{best\_model.pt} via
       \texttt{scripts/finalize\_run.py} (loads model, runs full
