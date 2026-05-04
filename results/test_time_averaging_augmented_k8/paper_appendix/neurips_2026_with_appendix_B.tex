@@ -1243,15 +1243,65 @@ Across all nine $(k,h)$ cells the difference between the single-pass
 deterministic-eigsh evaluation of the \texttt{random\_augmented} model
 and its \textsc{aug-$K$} averaged evaluation
 (Table~\ref{tab:lpe_molpcba_main}, right-most two columns) lies in
-$[-0.0002, +0.0005]$~AP, within the seed noise at every cell. We
-do not interpret this small $\Delta$ as conclusive evidence that the
-network is fully $\G_{\mathrm{LapPE}}$-invariant: that would require a
-direct test (e.g.\ measuring per-graph output stability across
-adversarial group elements), which we do not run here. The
-operational reading is that, at the configurations tested, applying
-$K\!\in\!\{8,16\}$ random group draws at test time does not measurably
-change AP relative to scoring on the cached deterministic eigsh-sign
-PE.
+$[-0.0002, +0.0005]$~AP, within the seed noise at every cell. The
+\textsc{aug-$K$} $\Delta$ is an aggregate metric, not a direct
+measurement of model invariance; we test invariance directly in the
+next paragraph.
+
+\paragraph{Per-graph orbit stability.}
+For each test graph we draw $K\!=\!64$ i.i.d.\ elements $g_j$ of the
+sign-flip subgroup of $\G_{\mathrm{LapPE}}$, forward-pass the trained
+\texttt{random\_augmented} model on each $g_j(\mathrm{LapPE})$, and
+record the per-task predicted probability. The resulting per-graph
+spread (max $-$ min predicted probability across the $K\!=\!64$ draws)
+is a direct measure of how much the model's output varies across
+orbit elements. Aggregating across all $43{,}793$ \texttt{ogbg-molpcba}
+test graphs and $128$ tasks, at hidden dim $h\!=\!128$ we observe a
+clean monotone scaling with $k$
+(Table~\ref{tab:lpe_molpcba_orbit}): the per-graph spread is
+$0.0018$ at $k\!=\!3$, $0.0034$ at $k\!=\!8$, and
+$0.0048\!\pm\!0.0008$ at $k\!=\!16$ (mean over $3$ seeds at $k\!=\!16$;
+single seed at $k\!\in\!\{3,8\}$). This is qualitatively consistent
+with $|\G_{\mathrm{LapPE}}|\!=\!2^{k}$: more orbit elements give more
+room to vary, and the model is closer to invariant for smaller $k$.
+Concretely at $k\!=\!16$/$h\!=\!128$, the per-draw test AP across
+$K\!=\!64$ orbit elements has standard deviation $0.0006$ within a
+seed and total range $\approx\!0.0024$, comparable to the
+seed-to-seed std of single-pass evaluation in
+Table~\ref{tab:lpe_molpcba_k16} ($0.0009$). The Reynolds-style
+(mean-probability) AP across the $K\!=\!64$ draws is
+$0.1923\!\pm\!0.0017$ over seeds, within seed noise of the
+matched-compute single-pass number ($0.1916\!\pm\!0.0009$ for
+\texttt{random\_augmented} and $0.1923\!\pm\!0.0005$ for the
+matched-compute \texttt{map} arm at the same cell). We read this as
+direct evidence that the \texttt{random\_augmented} model is
+approximately $\G_{\mathrm{LapPE}}$-invariant on the test distribution
+at the configurations tested.
+
+\begin{table}[h]
+\centering
+\caption{Per-graph orbit-stability of the trained
+\texttt{random\_augmented} model under $K\!=\!64$ uniform i.i.d.\
+draws from the sign-flip subgroup of $\G_{\mathrm{LapPE}}$, evaluated
+on the \texttt{ogbg-molpcba} test set. ``Per-graph spread'' is the
+mean over graphs and tasks of $(\max - \min)$ predicted probability
+across the $K\!=\!64$ orbit elements; ``per-draw AP std (within
+seed)'' is the standard deviation of the OGB AP scored on each single
+orbit draw. The $k\!=\!16$ row is the mean $\pm$ sample std over the
+$3$ training seeds; the $k\!\in\!\{3,8\}$ rows are single-seed
+estimates ($s\!=\!0$). Per-graph spread scales monotonically with
+$|\G_{\mathrm{LapPE}}|\!=\!2^{k}$.}
+\label{tab:lpe_molpcba_orbit}
+\begin{tabular}{rrcccc}
+\toprule
+$k$ & $h$ & seeds & per-graph spread & per-draw AP std (within seed) & Reynolds AP \\
+\midrule
+ 3  & 128 & 1 & $0.0018$               & $0.0004$  & $0.1741$ \\
+ 8  & 128 & 1 & $0.0034$               & $0.0005$  & $0.1806$ \\
+16  & 128 & 3 & $0.0048 \pm 0.0008$    & $0.0006$  & $0.1923 \pm 0.0017$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \paragraph{Reading the tables.}
 Reading along the hidden-dim axis at fixed $k$ in
