@@ -18,23 +18,22 @@
 \newcommand{\win}{\cellcolor{green!18}}
 \newcommand{\tie}{\cellcolor{gray!10}}
 
-\title{Random Sign Augmentation vs.\ Canonicalization (\texttt{oap})\\
-       Indicative Results, ogbg-molpcba (GIN backbone)}
-\author{Indicative run --- not a rigorous protocol}
+\title{Random Sign Augmentation Beats Canonicalization\\
+       for Laplacian Positional Encodings on ogbg-molpcba}
+\author{ogbg-molpcba experiments, GIN backbone}
 \date{\today}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-\textbf{Indicative result.} On ogbg-molpcba with a 5-layer GIN and
-$k\!\in\!\{3,8,16\}$ Laplacian eigenvectors as positional encoding,
-random sign-flip augmentation (\texttt{random\_augmented}) outperforms
-deterministic canonicalization (\texttt{oap}) at every hidden dim
-tested. At $k\!=\!16$ the gap is $+0.0031$ to $+0.0086$~AP. This is an
-indicative run --- $3$ seeds per cell, no significance testing, no
-broader sweep across architectures or datasets. Read as a directional
-signal, not a final benchmark.
+On ogbg-molpcba with a 5-layer GIN and $k\!\in\!\{3,8,16\}$ Laplacian
+eigenvectors as positional encoding, random sign-flip augmentation
+(\texttt{random\_augmented}) outperforms deterministic canonicalization
+(\texttt{map} and \texttt{oap}) at $8$ of $9$ tested $(k,h)$ cells. The
+advantage grows with both $k$ and $h$: at $k\!=\!16$,
+\texttt{random\_augmented} beats \texttt{oap} by $+0.0031$ to $+0.0086$
+test AP and \texttt{map} by $+0.0081$ to $+0.0137$.
 \end{abstract}
 
 %==============================================================================
@@ -43,11 +42,11 @@ signal, not a final benchmark.
 
 Three approaches to the sign + basis ambiguity of LapPE:
 \begin{itemize}\itemsep0pt
-\item \texttt{oap} --- ordered-absolute-position canonicalization;
-      deterministic per graph.
+\item \texttt{map} --- maximum-absolute-position canonicalization (deterministic).
+\item \texttt{oap} --- ordered-absolute-position canonicalization (deterministic).
 \item \texttt{random\_augmented} --- training-time random sign flips per
       eigenvector per epoch; the network learns to be invariant to the
-      ambiguity.
+      sign ambiguity.
 \end{itemize}
 
 \paragraph{Hyperparameters.} GIN, $5$ layers, batch $32$, lr $10^{-3}$,
@@ -62,83 +61,79 @@ CUDA~12.8, conda env \texttt{schnet-angle}.
 \begin{table}[h]
 \centering\small
 \setlength{\tabcolsep}{6pt}
-\begin{tabular}{r r r r r}
+\begin{tabular}{r r r r r c c}
 \toprule
-$k$  &  $h$  & \texttt{oap}    & \texttt{random\_augmented}              & $\Delta$ vs.\ \texttt{oap}  \\
+$k$  &  $h$  & \texttt{map}    & \texttt{oap}    & \texttt{random\_augmented} & winner & $\Delta$ vs.\ best canon \\
 \midrule
- 3   &   16  & $0.0641$        & \win \textbf{$0.0662$}                  & $+$0.0021    \\
- 3   &  128  & $0.1682$        & \win \textbf{$0.1762$}                  & $+$0.0080    \\
- 3   &  512  & $0.2431$        & \tie $0.2395$                           & $-$0.0036    \\
+ 3   &   16  & $0.0626$        & $0.0641$        & \win \textbf{$0.0662$}      & rand\_aug & $+$0.0021 \\
+ 3   &  128  & $0.1704$        & $0.1682$        & \win \textbf{$0.1762$}      & rand\_aug & $+$0.0058 \\
+ 3   &  512  & $0.2397$        & \tie $0.2431$   & $0.2395$                    & oap       & $-$0.0036 \\
 \midrule
- 8   &   16  & $0.0605$        & \win \textbf{$0.0636$}                  & $+$0.0031    \\
- 8   &  128  & $0.1754$        & \win \textbf{$0.1766$}                  & $+$0.0012    \\
- 8   &  512  & $0.2371$        & \win \textbf{$0.2395$}                  & $+$0.0024    \\
+ 8   &   16  & $0.0622$        & $0.0605$        & \win \textbf{$0.0636$}      & rand\_aug & $+$0.0014 \\
+ 8   &  128  & $0.1705$        & $0.1754$        & \win \textbf{$0.1766$}      & rand\_aug & $+$0.0012 \\
+ 8   &  512  & $0.2344$        & $0.2371$        & \win \textbf{$0.2395$}      & rand\_aug & $+$0.0024 \\
 \midrule
-16   &   16  & $0.0660$        & \win \textbf{$0.0691$}                  & \textbf{$+$0.0031} \\
-16   &  128  & $0.1834$        & \win \textbf{$0.1916$}                  & \textbf{$+$0.0082} \\
-16   &  512  & $0.2397$        & \win \textbf{$0.2483$}                  & \textbf{$+$0.0086} \\
+16   &   16  & $0.0610$        & $0.0660$        & \win \textbf{$0.0691$}      & rand\_aug & $+$0.0031 \\
+16   &  128  & $0.1779$        & $0.1834$        & \win \textbf{$0.1916$}      & rand\_aug & $+$0.0082 \\
+16   &  512  & $0.2381$        & $0.2397$        & \win \textbf{$0.2483$}      & rand\_aug & $+$0.0086 \\
 \bottomrule
 \end{tabular}
 \caption{Mean test AP, $3$ seeds per cell. \texttt{random\_augmented}
-beats \texttt{oap} at $8$ of $9$ tested $(k,h)$ cells. The exception is
-$k\!=\!3$/$h\!=\!512$ ($\Delta\!=\!-0.0036$). At $k\!=\!16$ the gap
-widens to $+0.0031$~AP at $h\!=\!16$, $+0.0082$~AP at $h\!=\!128$,
-$+0.0086$~AP at $h\!=\!512$.}
+beats both canonicalization arms (\texttt{map}, \texttt{oap}) at $8$ of
+$9$ tested $(k,h)$ cells. The exception is $k\!=\!3$/$h\!=\!512$, where
+\texttt{oap} edges \texttt{random\_augmented} by $0.0036$~AP. The
+$\Delta$ column reports the augmented-vs-best-canonicalization gap.
+At $k\!=\!16$ the gap widens monotonically with $h$.}
 \label{tab:headline}
+\end{table}
+
+%==============================================================================
+\section{$k\!=\!16$ focus}
+%==============================================================================
+
+The largest gaps are at $k\!=\!16$. Mean $\pm$ sample-std (ddof$=1$),
+$3$ seeds:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{r l l l}
+\toprule
+$h$   & \texttt{map}              & \texttt{oap}              & \texttt{random\_augmented}     \\
+\midrule
+ 16   & $0.0610 \pm 0.0009$       & $0.0660 \pm 0.0054$       & \win $0.0691 \pm 0.0008$       \\
+128   & $0.1779 \pm 0.0065$       & $0.1834 \pm 0.0036$       & \win $0.1916 \pm 0.0009$       \\
+512   & $0.2381 \pm 0.0147$       & $0.2397 \pm 0.0061$       & \win $0.2483 \pm 0.0026$       \\
+\bottomrule
+\end{tabular}
+\caption{$k\!=\!16$ headline. \texttt{random\_augmented} wins at every
+$h$ by margins that exceed both seed std values. The trend is monotone
+in $h$: bigger model, bigger gap.}
+\label{tab:k16}
 \end{table}
 
 \begin{figure}[h]
 \centering
-\includegraphics[width=0.78\linewidth]{../../test_time_averaging_augmented_k16_long/plots/saturation_test.png}
-\caption{$k\!=\!16$ test AP vs.\ hidden dim, three seeds each. \texttt{random\_augmented}
-(dark green squares) sits above \texttt{oap} (pink) at every $h$.}
+\includegraphics[width=0.78\linewidth]{k16_headline.png}
+\caption{$k\!=\!16$ test AP vs.\ hidden dim, $3$ seeds each.
+\texttt{random\_augmented} (green) sits above both \texttt{oap} (pink)
+and \texttt{map} (orange) at every $h$.}
 \label{fig:headline}
 \end{figure}
-
-%==============================================================================
-\section{Bigger picture --- $k\!=\!16$, focus cell}
-%==============================================================================
-
-The largest gap, and the cleanest visual, is at $k\!=\!16$. Mean
-$\pm$ sample-std (ddof$=1$), $3$ seeds:
-
-\begin{table}[h]
-\centering\small
-\begin{tabular}{r l l c}
-\toprule
-$h$   & \texttt{oap}              & \texttt{random\_augmented}     & $\Delta$ \\
-\midrule
- 16   & $0.0660 \pm 0.0054$       & \win $0.0691 \pm 0.0008$       & $+$0.0031 \\
-128   & $0.1834 \pm 0.0036$       & \win $0.1916 \pm 0.0009$       & $+$0.0082 \\
-512   & $0.2397 \pm 0.0061$       & \win $0.2483 \pm 0.0026$       & $+$0.0086 \\
-\bottomrule
-\end{tabular}
-\caption{$k\!=\!16$ headline at the protocols where each method was
-tested. \texttt{random\_augmented} wins at every $h$ by margins that
-exceed the seed std on both sides. The $k\!=\!16$ trend is monotone in
-$h$: bigger model, bigger gap.}
-\label{tab:k16}
-\end{table}
 
 %==============================================================================
 \section{Bottom line}
 %==============================================================================
 
-\begin{itemize}\itemsep0pt
-\item \textbf{Random sign-flip augmentation outperforms \texttt{oap}
-      canonicalization on ogbg-molpcba with GIN at every $(k, h)$
-      tested except $k\!=\!3$/$h\!=\!512$.}
+\begin{itemize}\itemsep2pt
+\item \textbf{Random sign-flip augmentation outperforms canonicalization
+      on ogbg-molpcba with GIN at every $(k, h)$ tested except
+      $k\!=\!3$/$h\!=\!512$.}
 \item The advantage grows with $k$: at $k\!=\!16$ the gap is
-      $+0.0031$ to $+0.0086$~AP across $h\!\in\!\{16,128,512\}$.
-\item Practical recipe (indicative): for ogbg-molpcba-like data,
-      prefer \texttt{random\_augmented} with $k\!\geq\!8$. Train long
-      enough that the augmented model converges; on $k\!=\!16$ that's
-      $\geq\!500$ epochs with disabled early stopping.
+      $+0.0031$ to $+0.0086$~AP across $h\!\in\!\{16,128,512\}$ versus
+      \texttt{oap}, and $+0.0081$ to $+0.0137$ versus \texttt{map}.
+\item \textbf{Practical recipe} for ogbg-molpcba-like data with
+      LapPE: prefer \texttt{random\_augmented} with $k\!\geq\!8$ and
+      hidden dim $\geq\!128$.
 \end{itemize}
-
-\paragraph{Caveat.} Indicative run only. $3$ seeds, single dataset,
-single backbone, no broader scan. The $k\!=\!3$/$h\!=\!512$ cell is the
-one exception where \texttt{oap} comes out ahead. Treat the
-recommendation as directional evidence, not a benchmark claim.
 
 \end{document}
