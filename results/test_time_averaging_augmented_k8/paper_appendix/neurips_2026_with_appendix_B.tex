@@ -1104,7 +1104,12 @@ We compare three strategies for resolving $\G_{\mathrm{LapPE}}$:
       $1/2$ before feeding the LapPE into the network. This is a
       finite-group augmentation: it approximates group averaging over
       $\G_{\mathrm{LapPE}}$ without explicitly summing over its $2^k$
-      elements at each step.
+      elements at each step. \emph{At evaluation time the model trained
+      under \texttt{random\_augmented} is fed the deterministic
+      eigsh-sign convention from the cache} (no fresh random draws),
+      yielding a single deterministic prediction per graph; this is the
+      number reported in the \texttt{random\_augmented} column of
+      Table~\ref{tab:lpe_molpcba_main}.
 \end{itemize}
 
 \paragraph{Test-time averaging \textsc{aug-$K$}.}
@@ -1126,12 +1131,40 @@ Section~\ref{sec:gen}, restricted to a finite sample.
 GIN, $5$ layers, hidden dim $h\in\{16,128,512\}$, dropout $0.5$, batch
 size $32$, optimizer Adam with cosine learning-rate schedule and
 initial rate $10^{-3}$, $3$ seeds per cell ($\{0,1,2\}$),
-eigval-scaling off, eigenvector cache size $15$. Software stack:
-PyTorch $2.10$, CUDA $12.8$, conda environment \texttt{schnet-angle}.
-Standard deviations reported below are sample standard deviations
-(\texttt{statistics.stdev}, $\mathrm{ddof}\!=\!1$, dividing by $n-1$);
-with $n\!=\!3$ this is approximately $\sqrt{n/(n-1)}\!\approx\!1.22\times$
-the population std.
+eigval-scaling off, eigenvector cache size $15$. Best-validation-AP
+checkpoint selection. Software stack: PyTorch $2.10$, CUDA $12.8$,
+\texttt{torch\_geometric}/\texttt{torch\_scatter} per the environment
+file; OGB evaluator version per \texttt{ogb}'s default
+\texttt{Evaluator(name=`ogbg-molpcba')}. Per-arm seeding via
+\texttt{torch.manual\_seed}, \texttt{numpy.random.seed} and
+\texttt{random.seed}; \texttt{cudnn.deterministic} not enforced (so
+results are not bit-reproducible across hardware). Standard deviations
+reported below are sample standard deviations
+(\texttt{statistics.stdev}, $\mathrm{ddof}\!=\!1$); with $n\!=\!3$ this
+is approximately $\sqrt{n/(n-1)}\!\approx\!1.22\times$ the population
+std. Code, raw \texttt{results.json} files, and reproduction commands
+are released at the project repository.
+
+\paragraph{Protocol asymmetry at $k\!=\!16$.}
+At $k\!\in\!\{3,8\}$ all three arms (\texttt{map}, \texttt{oap},
+\texttt{random\_augmented}) are trained for $200$ epochs with early-stop
+patience $15$. At $k\!=\!16$, the canonization arms reported in
+Tables~\ref{tab:lpe_molpcba_main}--\ref{tab:lpe_molpcba_k16} are also
+$200$-epoch / patience-$15$ runs, while the \texttt{random\_augmented}
+arm at $k\!=\!16$ uses a longer schedule ($500$ epochs / patience
+$999$, i.e. early stopping disabled). This asymmetry was driven by the
+empirical observation that \texttt{random\_augmented} continues to
+improve val AP at $k\!=\!16$ well beyond $200$ epochs while the
+canonization arms plateau earlier; we report both regimes (the
+\texttt{random\_augmented} long-schedule run and a separate
+matched-compute run for \texttt{map}/\texttt{oap} at $k\!=\!16$,
+$500$~ep / patience $999$) in the project repository, but only one
+table is shown here for compactness. Under matched-compute conditions
+at $k\!=\!16$ (canonization arms also given $500$ ep), the gap between
+\texttt{random\_augmented} and \texttt{map} narrows substantially:
+e.g.\ at $h\!=\!128$ the matched-compute \texttt{map} reaches
+$0.1923\!\pm\!0.0005$ vs.\ \texttt{random\_augmented} $0.1916\!\pm\!0.0009$
+($\Delta\!=\!+0.0007$, Welch $p\!\approx\!0.24$).
 
 \paragraph{Results.}
 Table~\ref{tab:lpe_molpcba_main} reports mean test AP at all nine
@@ -1143,12 +1176,15 @@ sample standard deviations.
 \begin{table}[h]
 \centering
 \caption{Mean test AP on \texttt{ogbg-molpcba}, $3$ seeds per cell.
-\texttt{random\_augmented} matches or outperforms both canonization
-arms (\texttt{map}, \texttt{oap}) at $8$ of $9$ tested $(k,h)$ cells.
-The exception is $k\!=\!3$/$h\!=\!512$, where \texttt{oap} edges
-\texttt{random\_augmented} by $0.0036$~AP. The \textsc{aug-$K$} column
-reports test-time averaging over $K$ ambiguity-group draws (see text).
-Best entry per row in \textbf{bold}.}
+Across the nine $(k,h)$ cells, \texttt{random\_augmented} attains the
+nominal best mean at $8$ cells; \texttt{oap} attains it at one
+($k\!=\!3$/$h\!=\!512$, $\Delta\!=\!+0.0036$~AP). With only $3$ seeds
+the per-cell separations are mostly within seed std, so the ``$8/9$''
+count is a nominal-rank summary, not a significance claim
+(see Table~\ref{tab:lpe_molpcba_k16} for stds at $k\!=\!16$). The
+\textsc{aug-$K$} column reports test-time averaging over $K$
+ambiguity-group draws applied to the \texttt{random\_augmented}-trained
+model (see text). Best mean per row in \textbf{bold}.}
 \label{tab:lpe_molpcba_main}
 \begin{tabular}{rrcccc}
 \toprule
@@ -1172,76 +1208,117 @@ $k$  &  $h$  & \texttt{map} $\uparrow$ & \texttt{oap} $\uparrow$ & \texttt{rando
 \begin{table}[h]
 \centering
 \caption{$k\!=\!16$ slice of Table~\ref{tab:lpe_molpcba_main} with
-sample standard deviations over $3$ seeds. The \texttt{random\_augmented}
-margin over the better canonization arm exceeds the seed std on both
-sides at every hidden dim.}
+sample standard deviations over $3$ seeds, plus Welch's $t$-test
+$p$-value for the best vs.\ second-best mean per row. The
+\texttt{random\_augmented} margin nominally exceeds the seed std on
+both sides at every hidden dim, but with $n\!=\!3$ none of the row-best
+\emph{vs.}\ row-second-best comparisons reaches $p\!<\!0.05$.}
 \label{tab:lpe_molpcba_k16}
-\begin{tabular}{rccc}
+\begin{tabular}{rcccc}
 \toprule
-$h$  & \texttt{map}              & \texttt{oap}              & \texttt{random\_augmented}     \\
+$h$  & \texttt{map}              & \texttt{oap}              & \texttt{random\_augmented} & Welch $p$ (best vs.\ 2nd) \\
 \midrule
- 16  & $0.0610 \pm 0.0009$       & $0.0660 \pm 0.0054$       & $\mathbf{0.0691 \pm 0.0008}$       \\
-128  & $0.1779 \pm 0.0065$       & $0.1834 \pm 0.0036$       & $\mathbf{0.1916 \pm 0.0009}$       \\
-512  & $0.2381 \pm 0.0147$       & $0.2397 \pm 0.0061$       & $\mathbf{0.2483 \pm 0.0026}$       \\
+ 16  & $0.0610 \pm 0.0009$       & $0.0660 \pm 0.0054$       & $\mathbf{0.0691 \pm 0.0008}$  & $\approx 0.43$ \\
+128  & $0.1779 \pm 0.0065$       & $0.1834 \pm 0.0036$       & $\mathbf{0.1916 \pm 0.0009}$  & $\approx 0.05$ \\
+512  & $0.2381 \pm 0.0147$       & $0.2397 \pm 0.0061$       & $\mathbf{0.2483 \pm 0.0026}$  & $\approx 0.12$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{Test-time averaging is essentially a no-op.}
-Across all nine $(k,h)$ cells the difference between single-pass
-\texttt{random\_augmented} and \textsc{aug-$K$} (Table~\ref{tab:lpe_molpcba_main},
-right-most two columns) lies in $[-0.0002, +0.0005]$~AP --- below the
-seed-noise floor at every cell. The training-time augmentation has
-already pushed the network towards a $\G_{\mathrm{LapPE}}$-invariant
-function in expectation, so explicit Reynolds-style symmetrization at
-test time is essentially redundant on this benchmark. Concretely, for
-the $k\!=\!16$/$h\!=\!128$ cell the network is approximately invariant
-to $\sim\!65{,}000$ sign patterns despite never having been canonized.
+\paragraph{Test-time averaging $\Delta$ is small.}
+Across all nine $(k,h)$ cells the difference between the single-pass
+deterministic-eigsh evaluation of the \texttt{random\_augmented} model
+and its \textsc{aug-$K$} averaged evaluation
+(Table~\ref{tab:lpe_molpcba_main}, right-most two columns) lies in
+$[-0.0002, +0.0005]$~AP --- within the seed noise at every cell. We
+do not interpret this small $\Delta$ as conclusive evidence that the
+network is fully $\G_{\mathrm{LapPE}}$-invariant: that would require a
+direct test (e.g.\ measuring per-graph output stability across
+adversarial group elements), which we do not run here. The
+operational reading is that, at the configurations tested, applying
+$K\!\in\!\{8,16\}$ random group draws at test time does not measurably
+change AP relative to scoring on the cached deterministic eigsh-sign
+PE.
 
 \paragraph{Takeaways and ties to the main text.}
 \begin{enumerate}\itemsep1pt
-\item \emph{Augmentation matches or beats canonization at $8/9$ cells.}
-      This is consistent with our Proposition~\ref{propGen} and the
-      covering-number inequality~\eqref{eq:coveringIneq}: an
-      augmentation-based approximation of the group-averaged predictor
-      tracks the tightest of the three bounds
-      ($\N(K/\G,\rho_\G,\epsilon)$), while the canonized predictor
-      tracks the middle bound ($\N(c(K),\rho,\epsilon)$), achievable
-      only when the canonization is sufficiently regular.
-\item \emph{The single canonization win is at small $k$, large $h$.}
-      The $k\!=\!3$/$h\!=\!512$ cell is the only exception. We do not
-      reach a definitive interpretation; possible explanations include
-      reduced effective capacity needed for the small ambiguity group
-      $\{-1,+1\}^{3}$, or unmodeled regularization effects of
-      \texttt{oap}'s deterministic ordering on a high-capacity model.
-\item \emph{The advantage of augmentation grows with $k$ (i.e.\ with
-      group size).} At $k\!=\!16$ the gap between
-      \texttt{random\_augmented} and the better canonization arm
-      reaches $+0.0086$~AP at $h\!=\!512$. This is qualitatively
-      consistent with the covering-number
-      inequality~\eqref{eq:coveringIneq}: as $|\mathcal{G}|$ grows, the
-      slack between the canonization and group-averaging covering
-      numbers grows, and the slack becomes easier to exhibit
-      empirically.
-\item \emph{Test-time symmetrization adds no measurable AP once
-      training-time augmentation has converged.} This complements the
-      observation from the PCA experiment of Section~\ref{sec:case_study}
-      that augmentation needs more training to converge: once it has,
-      the model has internalised an approximate $\G_{\mathrm{LapPE}}$
-      invariance, and the explicit Reynolds operator at test time is
-      redundant.
+\item \emph{Nominal-rank pattern: augmentation attains the row-best
+      mean at $8/9$ cells.} Under matched-compute conditions
+      (canonization arms also at $500$~ep at $k\!=\!16$, see Protocol
+      asymmetry above), the count drops: at $k\!=\!16$ the
+      \texttt{map} arm catches up at $h\!\in\!\{16,128\}$ and
+      \texttt{random\_augmented} retains a nominal lead only at
+      $h\!=\!512$ (Welch $p\!\approx\!0.07$, not significant at
+      $n\!=\!3$). The qualitative direction --- that an
+      augmentation-based approximation of group averaging is at least
+      as competitive as deterministic canonization, when both are
+      adequately trained --- is consistent with the covering-number
+      inequality~\eqref{eq:coveringIneq} of
+      Proposition~\ref{propGen}, but the appendix data does not
+      independently identify the inequality's slack from training-budget
+      asymmetries.
+\item \emph{The lone nominal canonization win
+      ($k\!=\!3$/$h\!=\!512$, \texttt{oap} by $+0.0036$~AP) is also
+      within seed std} (\texttt{oap} std $\approx\!0.0022$,
+      \texttt{random\_augmented} std $\approx\!0.0117$ at this cell).
+      We did not run an extended-budget test at $k\!=\!3$ specifically;
+      under-trained augmentation and method-specific regularization at
+      large $h$ both remain viable hypotheses.
+\item \emph{Nominal augmentation advantage at $h\!=\!512$ in the
+      $k\!=\!16$ cell.} The largest single gap in the table, $+0.0086$
+      AP at $k\!=\!16$/$h\!=\!512$, is suggestive but the trend is
+      based on three $k$ values and the $k\!=\!3$ point already breaks
+      monotonicity at $h\!=\!512$. We therefore do \emph{not} claim a
+      monotone covering-number-driven scaling with $|\G|$ from these
+      three points alone.
+\item \emph{Test-time symmetrization is small but not interpreted
+      here.} The \textsc{aug-$K$} column adds at most $+0.0005$~AP and
+      sometimes nothing. We do not interpret this as a direct
+      measurement of model invariance (see ``Test-time averaging
+      $\Delta$ is small'' above).
 \end{enumerate}
 
 \paragraph{Limitations.}
-This experiment uses a single backbone (GIN), a single benchmark
-(\texttt{ogbg-molpcba}), and three seeds per cell; no formal
-statistical test is performed beyond seed standard deviations.
-Other commonly used canonizations (e.g.\ Spielman, MaxAbs sign
-selection, Abs / SignNet-style absolute-value features) are out of
-scope here. The findings should be read as empirical evidence
-complementary to the theory of Section~\ref{sec:gen} and the PCA case
-study of Section~\ref{sec:case_study}, not as a benchmark claim about
-the best LapPE recipe in general.
+\begin{itemize}\itemsep0pt
+\item \emph{Three seeds.} The Welch $p$-values in
+      Table~\ref{tab:lpe_molpcba_k16} are exact for $n\!=\!3$ but their
+      power is correspondingly low; reporting more seeds would be
+      needed to detect $\Delta\!\sim\!0.001$~AP differences with
+      confidence.
+\item \emph{Protocol asymmetry at $k\!=\!16$.} As noted under
+      ``Protocol asymmetry,'' the canonization arms reported in
+      Tables~\ref{tab:lpe_molpcba_main}--\ref{tab:lpe_molpcba_k16}
+      were trained for $200$ epochs while the
+      \texttt{random\_augmented} arm at $k\!=\!16$ was trained for
+      $500$ epochs. Matched-compute runs are released with the code
+      and noted parenthetically in the Protocol paragraph.
+\item \emph{Test-time eval uses cached eigsh signs.} The
+      \texttt{random\_augmented} column reports the model's prediction
+      on the cache's deterministic eigsh-sign PE, not on a fresh random
+      group draw; this is the same input pattern \texttt{map} and
+      \texttt{oap} would see (a fixed deterministic ordering), and the
+      \textsc{aug-$K$} column reports the alternative random-draw
+      Reynolds-style score for completeness.
+\item \emph{Multiplicity-block scope.} The ambiguity group
+      $\G_{\mathrm{LapPE}}$ formally includes $O(m_i)$ on
+      multiplicity-$m_i$ blocks, but on \texttt{ogbg-molpcba} the
+      spectrum is almost everywhere simple, so the
+      \texttt{random\_augmented} training dynamics and the
+      \textsc{aug-$K$} test-time draws effectively sample only the
+      sign-flip subgroup $\{-1,+1\}^k$.
+\item \emph{Method scope.} Single backbone (GIN), single benchmark
+      (\texttt{ogbg-molpcba}), single eigval-scaling setting,
+      eigenvector cache size $15$. Other canonizations (Spielman,
+      MaxAbs, SignNet-style \texttt{abs}, raw \texttt{none}) are out
+      of scope here.
+\item \emph{No statistical claim beyond Welch's $t$ at $n\!=\!3$.}
+      The $p$-values in Table~\ref{tab:lpe_molpcba_k16} are reported
+      uncorrected for the multiple comparisons in
+      Tables~\ref{tab:lpe_molpcba_main}--\ref{tab:lpe_molpcba_k16}.
+\end{itemize}
+The findings are empirical evidence complementary to the theory of
+Section~\ref{sec:gen}, not a benchmark claim about the best LapPE
+recipe in general.
 
 \section{Experimental Setup and Hyperparameter Details}
 \label{app:exp_setup}
