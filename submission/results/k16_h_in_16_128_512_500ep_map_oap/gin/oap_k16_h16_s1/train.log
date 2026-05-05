@@ -1,0 +1,65 @@
+/home/snirhordan/miniconda3/envs/schnet-angle/lib/python3.10/site-packages/outdated/__init__.py:36: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import parse_version
+Device: cuda
+Loading ogbg-molpcba with oap canonicalization (k=16)...
+  Train: 350343 graphs
+  Valid: 43793 graphs
+  Test:  43793 graphs
+  Tasks: 128
+Model parameters: 5,952
+Epoch   1/500  loss=0.0716  val_AP=0.0409  (487.3s)
+Epoch  10/500  loss=0.0526  val_AP=0.0533  (486.6s)
+Epoch  20/500  loss=0.0524  val_AP=0.0571  (416.5s)
+Epoch  30/500  loss=0.0522  val_AP=0.0560  (383.8s)
+Epoch  40/500  loss=0.0522  val_AP=0.0580  (389.0s)
+Epoch  50/500  loss=0.0521  val_AP=0.0602  (391.6s)
+Epoch  60/500  loss=0.0521  val_AP=0.0613  (470.1s)
+Epoch  70/500  loss=0.0520  val_AP=0.0640  (405.2s)
+Epoch  80/500  loss=0.0520  val_AP=0.0643  (390.1s)
+Epoch  90/500  loss=0.0520  val_AP=0.0662  (348.0s)
+Epoch 100/500  loss=0.0520  val_AP=0.0651  (418.2s)
+Epoch 110/500  loss=0.0519  val_AP=0.0663  (404.9s)
+Epoch 120/500  loss=0.0519  val_AP=0.0661  (401.4s)
+Epoch 130/500  loss=0.0519  val_AP=0.0658  (399.1s)
+Epoch 140/500  loss=0.0518  val_AP=0.0707  (375.7s)
+Epoch 150/500  loss=0.0518  val_AP=0.0699  (395.0s)
+Epoch 160/500  loss=0.0517  val_AP=0.0708  (391.0s)
+Epoch 170/500  loss=0.0517  val_AP=0.0730  (475.1s)
+Epoch 180/500  loss=0.0517  val_AP=0.0715  (429.4s)
+Epoch 190/500  loss=0.0517  val_AP=0.0694  (436.8s)
+Epoch 200/500  loss=0.0516  val_AP=0.0711  (423.9s)
+Epoch 210/500  loss=0.0516  val_AP=0.0711  (377.7s)
+Epoch 220/500  loss=0.0516  val_AP=0.0731  (440.4s)
+Epoch 230/500  loss=0.0516  val_AP=0.0738  (409.4s)
+Epoch 240/500  loss=0.0515  val_AP=0.0775  (403.3s)
+Epoch 250/500  loss=0.0516  val_AP=0.0715  (396.0s)
+Epoch 260/500  loss=0.0516  val_AP=0.0745  (397.0s)
+Epoch 270/500  loss=0.0516  val_AP=0.0749  (462.3s)
+Epoch 280/500  loss=0.0515  val_AP=0.0763  (399.7s)
+Epoch 290/500  loss=0.0515  val_AP=0.0737  (398.0s)
+Epoch 300/500  loss=0.0515  val_AP=0.0765  (404.5s)
+Epoch 310/500  loss=0.0515  val_AP=0.0758  (378.7s)
+Epoch 320/500  loss=0.0515  val_AP=0.0744  (410.5s)
+Epoch 330/500  loss=0.0515  val_AP=0.0773  (407.2s)
+Epoch 340/500  loss=0.0514  val_AP=0.0766  (413.3s)
+Epoch 350/500  loss=0.0514  val_AP=0.0754  (436.4s)
+Epoch 360/500  loss=0.0514  val_AP=0.0761  (429.3s)
+Epoch 370/500  loss=0.0514  val_AP=0.0768  (430.1s)
+Epoch 380/500  loss=0.0514  val_AP=0.0768  (399.2s)
+Epoch 390/500  loss=0.0514  val_AP=0.0776  (427.5s)
+Epoch 400/500  loss=0.0514  val_AP=0.0777  (402.7s)
+Epoch 410/500  loss=0.0514  val_AP=0.0771  (432.5s)
+Epoch 420/500  loss=0.0514  val_AP=0.0775  (377.6s)
+Epoch 430/500  loss=0.0514  val_AP=0.0776  (369.9s)
+Epoch 440/500  loss=0.0514  val_AP=0.0769  (428.5s)
+Epoch 450/500  loss=0.0514  val_AP=0.0775  (424.5s)
+Epoch 460/500  loss=0.0514  val_AP=0.0774  (408.1s)
+Epoch 470/500  loss=0.0513  val_AP=0.0777  (360.2s)
+Epoch 480/500  loss=0.0514  val_AP=0.0772  (416.3s)
+Epoch 490/500  loss=0.0514  val_AP=0.0765  (413.7s)
+Epoch 500/500  loss=0.0514  val_AP=0.0775  (452.4s)
+
+Best epoch: 414
+Final val ap: 0.0784
+Final test ap: 0.0777
+Results saved to results/matched_compute_k16/gin/oap_k16_h16_s1

@@ -1,0 +1,22 @@
+\contentsline {section}{\numberline {1}What problem are we solving?}{2}{section.1}%
+\contentsline {paragraph}{Canonicalization.}{2}{section*.2}%
+\contentsline {paragraph}{Random augmentation.}{2}{section*.3}%
+\contentsline {paragraph}{Random augmentation $+$ test-time averaging.}{2}{section*.4}%
+\contentsline {section}{\numberline {2}Exact parameter settings}{3}{section.2}%
+\contentsline {paragraph}{Reproducibility.}{3}{section*.6}%
+\contentsline {paragraph}{Asymmetric test-time protocol.}{3}{section*.7}%
+\contentsline {section}{\numberline {3}Results}{4}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Sweep~1: $k=3$, $K=8$ --- random augmentation wins; one apparent \texttt {oap} edge (likely compute artefact)}{4}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Sweep~2: $k=8$, $K=16$ --- random augmentation wins at every hidden dim}{4}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Sweep~3: $k=16$, $K=16$ --- under fixed compute, \texttt {oap} appears to win at every hidden dim}{4}{subsection.3.3}%
+\contentsline {subsection}{\numberline {3.4}Sweep~4: $k=16$, $500$ epochs, no early stopping --- random augmentation wins everywhere}{5}{subsection.3.4}%
+\contentsline {subsection}{\numberline {3.5}Sweep~5: $k=16$, matched-compute follow-up --- \texttt {map} catches up, \texttt {oap} does not}{5}{subsection.3.5}%
+\contentsline {subsection}{\numberline {3.6}Side-by-side: at matched compute, no clear winner}{6}{subsection.3.6}%
+\contentsline {subsection}{\numberline {3.7}Visual summary --- saturation flips the $k\!=\!16$ verdict}{6}{subsection.3.7}%
+\contentsline {section}{\numberline {4}Interpretation}{6}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Matched compute on $k\!=\!16$: \texttt {map} $\approx $ \texttt {random\_augmented} $>$ \texttt {oap}}{6}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Why does training compute matter so much at large $k$?}{7}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Test-time averaging matters less than longer training}{8}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}Why the prior \texttt {oap} ``wins'' were not robust}{9}{subsection.4.4}%
+\contentsline {section}{\numberline {5}Main conclusions}{9}{section.5}%
+\contentsline {paragraph}{Caveats (read carefully --- the conclusions above are narrower than the headline of any single sweep would suggest).}{10}{section*.15}%

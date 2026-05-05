@@ -1,0 +1,10 @@
+# Pinned to versions used in the paper experiments. CUDA 12.8.
+torch==2.10.0
+torch-geometric==2.7.0
+torch-scatter
+numpy==2.2.6
+scipy==1.15.3
+ogb==1.3.6
+filelock
+tqdm
+scikit-learn

@@ -1,0 +1,10 @@
+model,canonicalization,k,hidden_dim,eigval_scale,epochs,mean_ap,std_ap,n_seeds
+gin,random_augmented,3,16,False,200,0.066223,0.001217,3
+gin,random_augmented,3,128,False,200,0.176241,0.005239,3
+gin,random_augmented,3,512,False,200,0.239539,0.009574,3
+gin,map,3,16,False,200,0.062602,0.002008,3
+gin,map,3,128,False,200,0.170449,0.004890,3
+gin,map,3,512,False,200,0.239690,0.009958,3
+gin,oap,3,16,False,200,0.064112,0.004157,3
+gin,oap,3,128,False,200,0.168235,0.007291,3
+gin,oap,3,512,False,200,0.243148,0.001766,3
