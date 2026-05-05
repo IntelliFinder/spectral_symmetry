@@ -40,7 +40,7 @@ canonicalizations, all retrained under this protocol: `random_augmented`,
 ## Launch command
 
 ```bash
-python scripts/ablation_nadav_improvements.py \
+python scripts/run_lappe_sweep.py \
     --canonicalization random_augmented map oap \
     --hidden-dim 16 128 512 \
     --k 3 \
@@ -134,7 +134,7 @@ noise that a large model has to learn to ignore.
   Δ aug-averaging might grow.
 - Only `map` and `oap` are included as canonicalization baselines (per
   user's instruction); `spielman`, `maxabs`, `none` are out of scope here.
-  See `results/nadav_improvements/` for those methods under the prior
+  See `results/lappe_sweep/` for those methods under the prior
   (inconsistent-budget) protocol.
 - All runs use patience 15 / epochs 200. Most early-stopped at epoch
   40–90; the full 200-epoch budget was rarely used.
@@ -147,6 +147,6 @@ noise that a large model has to learn to ignore.
 ```bash
 pytest tests/test_unified_canonicalization.py::TestRandomAugmentEigenvectors -v
 bash scripts/launch.sh                       # or the launch command above
-python scripts/ablation_nadav_improvements.py --analysis-only \
+python scripts/run_lappe_sweep.py --analysis-only \
     --base-dir results/test_time_averaging_augmented
 ```

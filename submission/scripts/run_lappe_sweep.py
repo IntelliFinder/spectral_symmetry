@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Nadav improvements ablation on ogbg-molpcba.
+"""LapPE canonization sweep on ogbg-molpcba.
 
 Extended sweep with:
   - New canonicalizations: abs (SignNet-style), spielman_partition (partial Spielman)
@@ -7,20 +7,20 @@ Extended sweep with:
   - Wider hidden-dim sweep: h={16, 32, 64, 128, 256}
   - All 9 canonicalization methods
 
-Produces summary CSV and comparison plots in results/nadav_improvements/plots/.
+Produces summary CSV and comparison plots in results/<base_dir>/plots/.
 
 Usage:
     # Dry run
-    python scripts/ablation_nadav_improvements.py --gpus 0 1 2 3 4 5 --dry-run
+    python scripts/run_lappe_sweep.py --gpus 0 1 2 3 4 5 --dry-run
 
     # Full training
-    python scripts/ablation_nadav_improvements.py --gpus 0 1 2 3 4 5
+    python scripts/run_lappe_sweep.py --gpus 0 1 2 3 4 5
 
     # Analysis only (after training)
-    python scripts/ablation_nadav_improvements.py --analysis-only
+    python scripts/run_lappe_sweep.py --analysis-only
 
     # Filter
-    python scripts/ablation_nadav_improvements.py --model gin \
+    python scripts/run_lappe_sweep.py --model gin \
         --canonicalization abs spielman_partition
 """
 
@@ -84,7 +84,7 @@ EIGVAL_SCALE_OPTIONS = [False, True]
 CACHE_K = 15
 MAX_PARALLEL = 6
 
-BASE_DIR = "results/nadav_improvements"
+BASE_DIR = "results/lappe_sweep"
 PLOT_DIR = os.path.join(BASE_DIR, "plots")
 
 METRIC_KEY = "best_test_ap"
@@ -722,7 +722,7 @@ def run_analysis(results):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Nadav improvements ablation on molpcba")
+    parser = argparse.ArgumentParser(description="LapPE canonization sweep on ogbg-molpcba")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running")
     parser.add_argument(
         "--analysis-only", action="store_true", help="Skip training, run analysis only"
@@ -788,7 +788,7 @@ def main():
         default=None,
         help=(
             "Override BASE_DIR — where results are saved and loaded from "
-            "(default: results/nadav_improvements)."
+            "(default: results/lappe_sweep)."
         ),
     )
     parser.add_argument(

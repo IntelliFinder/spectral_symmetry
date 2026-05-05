@@ -1,8 +1,8 @@
 # Appendix B: Augmentation vs. Canonization on `ogbg-molpcba`
 
-Reproducible code, raw results, and the compiled paper for the experiments in
-Appendix B of *Canonization Perspectives on Invariant Learning* (NeurIPS 2026
-submission).
+Reproducible code and raw results for the appendix experiments comparing
+augmentation against deterministic canonization of Laplacian positional
+encodings on the OGB `ogbg-molpcba` graph property prediction benchmark.
 
 The appendix compares three strategies for resolving the eigenvector
 ambiguity group of Laplacian positional encodings (LapPE) on the OGB
@@ -17,9 +17,6 @@ submission/
 ├── README.md                        # this file
 ├── requirements.txt                 # pip-installable package list
 ├── environment.yml                  # full conda export
-├── paper_appendix/
-│   ├── neurips_2026_with_appendix_B.tex
-│   └── neurips_2026_with_appendix_B.pdf
 ├── src/                             # python package
 │   ├── spectral_canonicalization.py # map, oap, random_augmented, +abs+maxabs
 │   ├── spectral_core.py             # Laplacian eigenpair computation
@@ -29,7 +26,7 @@ submission/
 │       └── model.py                 # GINLapPE, GCNLapPE
 ├── scripts/
 │   ├── train_molecular.py           # main training entry point
-│   ├── ablation_nadav_improvements.py # multi-cell sweep launcher
+│   ├── run_lappe_sweep.py # multi-cell sweep launcher
 │   ├── orbit_stability_eval.py      # per-graph orbit-stability eval
 │   └── finalize_run.py              # rerun eval from saved best_model.pt
 └── results/                         # raw outputs (results.json, best_model.pt, orbit_stability.json, etc.)
@@ -73,7 +70,7 @@ The tables aggregate 81 training runs. The sweep launcher orchestrates them.
 
 ```bash
 # k=3 row (Tables 4 row 1-3): 27 runs, 200 epochs, patience 15
-python3 scripts/ablation_nadav_improvements.py \
+python3 scripts/run_lappe_sweep.py \
     --canonicalization map oap random_augmented \
     --k 3 --hidden-dim 16 128 512 \
     --cache-n-eigs 15 --seeds 0 1 2 \
@@ -84,7 +81,7 @@ python3 scripts/ablation_nadav_improvements.py \
     --gpus 0 1 --workers-per-gpu 2
 
 # k=8 row (Tables 4 row 4-6): 27 runs at 200 ep / patience 15
-python3 scripts/ablation_nadav_improvements.py \
+python3 scripts/run_lappe_sweep.py \
     --canonicalization map oap random_augmented \
     --k 8 --hidden-dim 16 128 512 \
     --cache-n-eigs 15 --seeds 0 1 2 \
@@ -95,7 +92,7 @@ python3 scripts/ablation_nadav_improvements.py \
     --gpus 0 1 --workers-per-gpu 2
 
 # k=16 row (Tables 4 row 7-9 + Table 5): 27 runs at 500 ep / patience 999 (matched compute)
-python3 scripts/ablation_nadav_improvements.py \
+python3 scripts/run_lappe_sweep.py \
     --canonicalization random_augmented \
     --k 16 --hidden-dim 16 128 512 \
     --cache-n-eigs 16 --seeds 0 1 2 \
@@ -105,7 +102,7 @@ python3 scripts/ablation_nadav_improvements.py \
     --base-dir results/k16_h_in_16_128_512_500ep_random_augmented \
     --gpus 0 1 --workers-per-gpu 2
 
-python3 scripts/ablation_nadav_improvements.py \
+python3 scripts/run_lappe_sweep.py \
     --canonicalization map oap \
     --k 16 --hidden-dim 16 128 512 \
     --cache-n-eigs 16 --seeds 0 1 2 \
@@ -117,7 +114,7 @@ python3 scripts/ablation_nadav_improvements.py \
 
 After completion, each run's `results.json` contains `best_test_ap` and
 (for `random_augmented` only) `best_test_ap_aug{K}`. Aggregate by hand or
-with the loader code in `scripts/ablation_nadav_improvements.py`'s analysis
+with the loader code in `scripts/run_lappe_sweep.py`'s analysis
 mode.
 
 The `--cache-n-eigs` flag controls the eigenvector cache: at k=8 we use

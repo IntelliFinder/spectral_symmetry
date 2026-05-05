@@ -113,7 +113,7 @@ a tenth of a std. This matches the k=3 finding: averaging is
   gap there. At h=128 the random_augmented lead is only +0.0012 — within
   1σ. Not worth celebrating; at h=16 and h=512 the margin is clear.
 - Only `map` and `oap` included (plan scope). `spielman`, `maxabs`,
-  `none` etc. are out of scope — see `results/nadav_improvements/` for
+  `none` etc. are out of scope — see `results/lappe_sweep/` for
   those methods under a different protocol.
 
 ## Reproducing
@@ -123,7 +123,7 @@ a tenth of a std. This matches the k=3 finding: averaging is
 pytest tests/test_unified_canonicalization.py::TestRandomAugmentEigenvectors -v
 
 # Full sweep
-python scripts/ablation_nadav_improvements.py \
+python scripts/run_lappe_sweep.py \
     --canonicalization random_augmented map oap \
     --hidden-dim 16 128 512 \
     --k 8 \

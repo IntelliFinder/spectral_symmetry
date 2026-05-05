@@ -122,7 +122,7 @@ Spielman and MaxAbs are intentionally excluded from the comparison.
   is set (so launcher scripts can pass it unconditionally), matching the
   user's rule: only for augmented models.
 
-### 4. `scripts/ablation_nadav_improvements.py`
+### 4. `scripts/run_lappe_sweep.py`
 - Add `--test-aug-samples` (default 0) to argparse; thread it into
   `build_commands` (L218) as `--test-aug-samples <N>`.
 - For this plan we launch with K=8.
@@ -153,7 +153,7 @@ Spielman and MaxAbs are intentionally excluded from the comparison.
 - `src/spectral_core.py` (reuse `detect_eigenvalue_multiplicities` L287)
 - `src/experiments/molecular/dataset.py` (L135 `_SplitView`, L412–484)
 - `scripts/train_molecular.py` (L89 evaluate, L199 args, L362–417 final)
-- `scripts/ablation_nadav_improvements.py` (L218 build_commands)
+- `scripts/run_lappe_sweep.py` (L218 build_commands)
 
 ## Hyperparameters for the Asana rerun
 
@@ -205,7 +205,7 @@ results/test_time_averaging_augmented/
 ### Launch command
 
 ```bash
-python scripts/ablation_nadav_improvements.py \
+python scripts/run_lappe_sweep.py \
     --canonicalization random_augmented map oap \
     --hidden-dim 16 128 512 \
     --k 3 \

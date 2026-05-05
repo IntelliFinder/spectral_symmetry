@@ -46,7 +46,7 @@ and arbitrary O(m) multiplicities:
   `src/experiments/molecular/dataset.py` is k-agnostic.
 - `evaluate_with_aug_averaging` and `--test-aug-samples` in
   `scripts/train_molecular.py` take K as an int.
-- `scripts/ablation_nadav_improvements.py` already threads `--k` and
+- `scripts/run_lappe_sweep.py` already threads `--k` and
   `--test-aug-samples` through.
 
 This plan is a pure configuration change: `--k 8 --test-aug-samples 16
@@ -87,7 +87,7 @@ Expected wall clock similar too — roughly ~1.5–2 days on GPUs 0, 1.
 ## Launch command
 
 ```bash
-python scripts/ablation_nadav_improvements.py \
+python scripts/run_lappe_sweep.py \
     --canonicalization random_augmented map oap \
     --hidden-dim 16 128 512 \
     --k 8 \

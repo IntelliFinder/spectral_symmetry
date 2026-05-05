@@ -129,7 +129,7 @@ are exact.
 ## Reproducing
 
 ```bash
-python scripts/ablation_nadav_improvements.py \
+python scripts/run_lappe_sweep.py \
     --canonicalization random_augmented \
     --hidden-dim 16 128 512 \
     --k 16 --cache-n-eigs 16 \

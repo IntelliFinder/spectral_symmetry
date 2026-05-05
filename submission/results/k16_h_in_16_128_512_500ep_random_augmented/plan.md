@@ -46,7 +46,7 @@ per run. $9$ runs in parallel on $12$ GPU slots ($2$ A40s × $6$ workers)
 ## Launch command
 
 ```bash
-python scripts/ablation_nadav_improvements.py \
+python scripts/run_lappe_sweep.py \
     --canonicalization random_augmented \
     --hidden-dim 16 128 512 \
     --k 16 \
