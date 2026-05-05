@@ -1151,20 +1151,28 @@ This is the empirical group-averaging operator of
 Section~\ref{sec:gen}, restricted to a finite sample.
 
 \paragraph{Hyperparameters and protocol.}
-GIN, $5$ layers, hidden dim $h\in\{16,128,512\}$, dropout $0.5$, batch
-size $32$, optimizer Adam with cosine learning-rate schedule and
+GIN, $5$ layers, hidden dim $h\!\in\!\{16,128,512\}$, dropout $0.5$,
+batch size $32$, optimizer Adam with cosine learning-rate schedule and
 initial rate $10^{-3}$, $3$ seeds per cell ($\{0,1,2\}$),
-eigval-scaling off, eigenvector cache size $15$. Best-validation-AP
-checkpoint selection. Software stack: PyTorch $2.10$, CUDA $12.8$,
-\texttt{torch\_geometric}/\texttt{torch\_scatter} per the environment
-file; OGB evaluator version per \texttt{ogb}'s default
-\texttt{Evaluator(name=`ogbg-molpcba')}. Per-arm seeding via
-\texttt{torch.manual\_seed}, \texttt{numpy.random.seed} and
-\texttt{random.seed}; \texttt{cudnn.deterministic} not enforced (so
-results are not bit-reproducible across hardware). Standard deviations
-reported below are sample standard deviations ($\mathrm{ddof}\!=\!1$).
-Code, raw \texttt{results.json} files, and reproduction commands are
-released at the project repository.
+eigval-scaling off, eigenvector cache size $15$. Checkpoint selection:
+the model state at the epoch with the highest validation AP across
+all training epochs is saved (ties broken by earliest epoch); the
+final test AP reported in
+Tables~\ref{tab:lpe_molpcba_main}~and~\ref{tab:lpe_molpcba_k16} is
+this checkpoint's score on the OGB test split. Software stack:
+PyTorch $2.10.0$, CUDA $12.8$, \texttt{torch\_geometric} $2.7.0$,
+\texttt{numpy} $2.2.6$, \texttt{scipy} $1.15.3$, \texttt{ogb} $1.3.6$
+(OGB evaluator: \texttt{Evaluator(name=`ogbg-molpcba')}). Per-arm
+seeding via \texttt{torch.manual\_seed}, \texttt{numpy.random.seed},
+and \texttt{random.seed}; \texttt{cudnn.deterministic} is not
+enforced, so two runs at the same seed on different hardware are not
+guaranteed to be bit-identical (we observe the resulting variability
+absorbed into the seed std at the magnitudes shown in
+Table~\ref{tab:lpe_molpcba_k16}). Standard deviations reported below
+are sample standard deviations ($\mathrm{ddof}\!=\!1$). Code, raw
+\texttt{results.json} files, the \texttt{orbit\_stability.json} files
+behind Table~\ref{tab:lpe_molpcba_orbit}, and reproduction commands
+are released at the project repository.
 
 \paragraph{Compute budget.}
 At $k\!\in\!\{3,8\}$ all three arms are trained for $200$ epochs with
