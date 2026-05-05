@@ -1289,15 +1289,19 @@ approximately $\G_{\mathrm{LapPE}}$-invariant on the test
 distribution at the configurations tested, with the residual
 non-invariance growing predictably with the size of the ambiguity
 group. Along the hidden-dim axis at $k\!=\!16$
-(Table~\ref{tab:lpe_molpcba_orbit}, lower block), the per-graph
-spread is non-monotone in $h$: $0.0033$ at $h\!=\!16$,
-$0.0056$ at $h\!=\!128$, $0.0030$ at $h\!=\!512$. We attribute
-this to a capacity floor and a capacity ceiling: at $h\!=\!16$ the
-network underfits (test AP $\approx\!0.07$, near a constant-prediction
+(Table~\ref{tab:lpe_molpcba_orbit}, lower block, $3$ seeds per cell),
+the per-graph spread is non-monotone in $h$:
+$0.0032\!\pm\!0.0015$ at $h\!=\!16$,
+$0.0048\!\pm\!0.0008$ at $h\!=\!128$,
+$0.0033\!\pm\!0.0004$ at $h\!=\!512$. We attribute this to a
+capacity floor and a capacity ceiling: at $h\!=\!16$ the network
+underfits (test AP $\approx\!0.07$, near a constant-prediction
 baseline) so per-graph predictions are bunched near a few values
 and have little room to spread; at $h\!=\!512$ the network has
-enough capacity to learn invariance; the middle case $h\!=\!128$
-sees the largest residual non-invariance.
+enough capacity to learn invariance well; the middle case
+$h\!=\!128$ shows the largest residual non-invariance, although the
+$h\!=\!16$ row's larger seed std ($0.0015$) suggests this conclusion
+is sensitive to which random initialisation one looks at.
 
 \begin{table}[h]
 \centering
@@ -1323,14 +1327,12 @@ $k$ & $h$ & per-graph spread & within-seed AP std & Reynolds AP \\
  8  & 128 & $0.0027 \pm 0.0012$ & $\le 0.0005$ & $0.1766 \pm 0.0062$ \\
 16  & 128 & $0.0048 \pm 0.0008$ & $\le 0.0006$ & $0.1923 \pm 0.0017$ \\
 \midrule
-\multicolumn{5}{l}{\emph{$h$ axis at $k\!=\!16$ (single seed $s\!=\!0$):}} \\
-16  &  16 & $0.0033$            & $0.0002$    & $0.0683$ \\
-16  & 128 & $0.0056$\,$^{*}$    & $0.0006$    & $0.1918$ \\
-16  & 512 & $0.0030$            & $0.0003$    & $0.2493$ \\
+\multicolumn{5}{l}{\emph{$h$ axis at $k\!=\!16$ (3 seeds):}} \\
+16  &  16 & $0.0032 \pm 0.0015$ & $\le 0.0003$ & $0.0694 \pm 0.0010$ \\
+16  & 128 & $0.0048 \pm 0.0008$ & $\le 0.0006$ & $0.1923 \pm 0.0017$ \\
+16  & 512 & $0.0033 \pm 0.0004$ & $\le 0.0004$ & $0.2481 \pm 0.0023$ \\
 \bottomrule
 \end{tabular}
-\smallskip
-\par\noindent\footnotesize $^{*}$$s\!=\!0$ value at $k\!=\!16$/$h\!=\!128$, included in the $k$-axis row above as part of the 3-seed mean $0.0048\!\pm\!0.0008$.\normalsize
 \end{table}
 
 \paragraph{Reading the tables.}
