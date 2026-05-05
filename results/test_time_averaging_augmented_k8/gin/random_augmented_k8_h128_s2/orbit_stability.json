@@ -1,0 +1,34 @@
+{
+  "save_dir": "results/test_time_averaging_augmented_k8/gin/random_augmented_k8_h128_s2",
+  "canonicalization": "random_augmented",
+  "n_eigs": 8,
+  "hidden_dim": 128,
+  "seed": 2,
+  "K": 64,
+  "base_seed": 1,
+  "num_graphs": 43793,
+  "num_tasks": 128,
+  "mean_spread_overall": 0.003321660915389657,
+  "mean_std_overall": 0.0009147623786702752,
+  "mean_spread_per_task_summary": {
+    "mean": 0.0033216553488699674,
+    "min": 1.6706391761545092e-05,
+    "max": 0.04362994432449341
+  },
+  "per_graph_mean_spread": {
+    "mean": 0.0033216613810509443,
+    "p50": 0.002572434488683939,
+    "p95": 0.008700590766966344,
+    "p99": 0.01406604461371901
+  },
+  "mean_spread_top1pct_graphs": 0.018473098054528236,
+  "per_draw_metric": {
+    "mean": 0.1692861582444128,
+    "std_ddof1": 0.0003800621508688198,
+    "min": 0.168624101405298,
+    "max": 0.17058548424466297,
+    "spread": 0.001961382839364978
+  },
+  "reynolds_mean_metric": 0.16947896568192294,
+  "metric_name": "ap"
+}
