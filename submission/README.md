@@ -26,7 +26,8 @@ submission/
 │       └── model.py                 # GINLapPE, GCNLapPE
 ├── scripts/
 │   ├── train_molecular.py           # main training entry point
-│   ├── run_lappe_sweep.py # multi-cell sweep launcher
+│   ├── run_lappe_sweep.py           # multi-cell sweep launcher
+│   ├── aggregate_table5.py          # aggregate results.json into Table 5
 │   ├── orbit_stability_eval.py      # per-graph orbit-stability eval
 │   └── finalize_run.py              # rerun eval from saved best_model.pt
 └── results/                         # raw outputs (results.json, best_model.pt, orbit_stability.json, etc.)
@@ -113,12 +114,47 @@ python3 scripts/run_lappe_sweep.py \
 ```
 
 After completion, each run's `results.json` contains `best_test_ap` and
-(for `random_augmented` only) `best_test_ap_aug{K}`. Aggregate by hand or
-with the loader code in `scripts/run_lappe_sweep.py`'s analysis
-mode.
+(for `random_augmented` only) `best_test_ap_aug{K}` (the AUG-K column).
 
 The `--cache-n-eigs` flag controls the eigenvector cache: at k=8 we use
 `cache-n-eigs=15` so the same cache is shared across multiple k slices.
+
+#### Aggregating the runs into Table 5
+
+`scripts/aggregate_table5.py` reproduces Table 5 directly from the saved
+`results.json` files. It walks the results tree, groups runs by
+`(k, h, canonicalization)` read from each JSON (so the `gin/` nesting and the
+split `map`+`oap` / `random_augmented` `k=16` directories are merged
+automatically), averages over the 3 seeds, and prints the 9-cell mean test AP
+for the three arms plus the AUG-K column (test-time averaging over `K`
+ambiguity-group draws on the `random_augmented` model — `K = 8` at `k = 3`,
+`K = 16` at `k in {8, 16}`). The `*` / bold marker is the nominal row-best mean,
+*not* a significance claim. It uses only the Python standard library, so it runs
+without the training dependencies installed.
+
+```bash
+# Text table (default): reads every results.json under results/
+python3 scripts/aggregate_table5.py --results-root results
+
+# Markdown table (row-best arm in bold)
+python3 scripts/aggregate_table5.py --results-root results --format markdown
+
+# Also dump per-cell mean / sample-std (ddof=1) / n to CSV
+python3 scripts/aggregate_table5.py --results-root results --csv table5.csv
+```
+
+Run against the bundled `results/`, it reproduces Table 5 exactly — e.g. the
+`k = 16` slice:
+
+```
+ k    h      map        oap        random_aug   AUG-K
+16    16     0.0716*    0.0703     0.0691    0.0693 (K=16)
+16   128     0.1923*    0.1836     0.1916    0.1921 (K=16)
+16   512     0.2468     0.2419     0.2483*   0.2481 (K=16)
+```
+
+The script also prints a per-arm `mean +/- sample std (ddof=1)` block, which
+supplies the seed standard deviations referenced in the Table 5 caption.
 
 ### Table 6 — per-graph orbit stability
 
