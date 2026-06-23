@@ -48,17 +48,58 @@ scripts produce: `<canon>_k<k>_h<h>_s<seed>/`. Each run directory holds:
 
 ## Setup
 
-This was developed with Python 3.10, PyTorch 2.10.0, CUDA 12.8.
+Developed with Python 3.10, PyTorch 2.10.0, CUDA 12.8. Either install path
+below produces a working `appendix_b` conda environment; pick one.
+
+### Option A — exact pinned environment (recommended, Linux x86-64)
+
+`environment.yml` is a full `conda env export` of the machine used for the
+paper experiments. It is the most reproducible path on a matching platform:
 
 ```bash
-conda create -n appendix_b python=3.10
+conda env create -f environment.yml -n appendix_b   # -n overrides the name in the file
 conda activate appendix_b
-pip install -r requirements.txt
-# (or: conda env create -f environment.yml)
 ```
 
-The OGB `ogbg-molpcba` raw data is not bundled. It will download automatically
-on first use (~280 MB). Pin the OGB evaluator to version `1.3.6`.
+### Option B — fresh env + pip (more portable across CUDA versions)
+
+```bash
+conda create -n appendix_b python=3.10 -y
+conda activate appendix_b
+
+# 1. Install PyTorch built for *your* CUDA toolkit. Example for CUDA 12.8:
+pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+
+# 2. torch-scatter must match the installed torch + CUDA build. Install it
+#    from PyG's wheel index (substitute your torch/CUDA tags, e.g. 2.10.0+cu128):
+pip install torch-scatter -f https://data.pyg.org/whl/torch-2.10.0+cu128.html
+
+# 3. Remaining pinned dependencies (torch / torch-scatter already satisfied):
+pip install -r requirements.txt
+```
+
+The pinned dependency set (`requirements.txt`) is: `torch==2.10.0`,
+`torch-geometric==2.7.0`, `torch-scatter`, `numpy==2.2.6`, `scipy==1.15.3`,
+`ogb==1.3.6`, `filelock`, `tqdm`, `scikit-learn`.
+
+### Verify the environment
+
+```bash
+python3 -c "import torch, torch_geometric, ogb; from ogb.graphproppred import Evaluator; \
+print('torch', torch.__version__, '| PyG', torch_geometric.__version__, \
+'| ogb', ogb.__version__, '| cuda', torch.cuda.is_available())"
+```
+
+**Version notes.** `ogb` must be pinned to **`1.3.6`** — the `ogbg-molpcba`
+Average Precision metric definition is tied to that evaluator release, so other
+versions can shift the reported numbers. The training/eval code is otherwise
+tolerant of older PyTorch/PyG: it has been run successfully on
+`torch==2.2.0+cu118` / `torch-geometric==2.3.1` / `ogb==1.3.6` as well, so if a
+matching `torch==2.10.0` wheel is unavailable for your CUDA toolkit, an older
+PyTorch with the same `ogb` pin reproduces the tables.
+
+The OGB `ogbg-molpcba` raw data is not bundled. It downloads automatically on
+first use (~280 MB) into `--data-dir` (default `data/`).
 
 ## Reproducing the appendix's tables
 
